@@ -1261,24 +1261,7 @@ textarea { resize: vertical; }
 
   </div>
 
-  <!-- Save Ride Modal -->
-  <div id="save-modal" class="modal">
-    <div class="modal-inner save-modal-inner">
-      <h2>Save Ride</h2>
-      <label>Title</label>
-      <input type="text" id="save-title" placeholder="Give this ride a name" />
-      <label>Notes</label>
-      <textarea id="save-notes" placeholder="Anything memorable?" rows="3"></textarea>
-      <label>Make public (shareable)?</label>
-      <div class="toggle-row">
-        <input type="checkbox" id="save-public" class="toggle" />
-        <label for="save-public" class="toggle-label"></label>
-        <span id="save-public-text">Private</span>
-      </div>
-      <button class="btn-primary" onclick="confirmSave()">Save</button>
-      <button class="btn-secondary" onclick="discardRide()">Discard</button>
-    </div>
-  </div>
+<!-- Save modal removed - using page-save overlay instead -->
 
   <div id="toast" class="toast"></div>
 
