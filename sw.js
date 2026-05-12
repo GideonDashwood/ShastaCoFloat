@@ -1,11 +1,5 @@
-const CACHE = 'ridelogger-v1';
-const ASSETS = [
-  '/',
-  '/index.html',
-  '/css/style.css',
-  '/js/app.js',
-  '/manifest.json'
-];
+const CACHE = 'ridelogger-v2';
+const ASSETS = ['/', '/index.html', '/manifest.json'];
 
 self.addEventListener('install', e => {
   e.waitUntil(
@@ -22,8 +16,7 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  // Network first for API calls, cache first for assets
-  if (e.request.url.includes('supabase.co') || e.request.url.includes('unpkg.com') || e.request.url.includes('fonts.')) {
+  if (e.request.url.includes('firebase') || e.request.url.includes('googleapis') || e.request.url.includes('gstatic')) {
     e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
     return;
   }
