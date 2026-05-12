@@ -132,7 +132,7 @@ function showPage(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById(`page-${page}`).classList.add('active');
-  document.querySelector(`[data-page="${page}"]`).classList.add('active');
+  document.querySelectorAll(`[data-page="${page}"]`).forEach(b => b.classList.add('active'));
 
   if (page === 'profile') loadProfileStats();
 }
