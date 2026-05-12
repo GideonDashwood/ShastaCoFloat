@@ -17,6 +17,13 @@
     import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js";
     import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, where, orderBy, updateDoc } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
 
+    // Check if we're in save mode (?save=1) - no map ever loads in this mode
+    const SAVE_MODE = new URLSearchParams(window.location.search).get('save') === '1';
+    if (SAVE_MODE) {
+      // Remove Leaflet script to ensure canvas never initializes
+      document.querySelectorAll('script[src*="leaflet"]').forEach(s => s.remove());
+    }
+
     const firebaseConfig = {
       apiKey: "AIzaSyC5OmjOLKGV-UjTpCkE3Rz8upeac9QezQI",
       authDomain: "shastacofloat.firebaseapp.com",
@@ -131,13 +138,35 @@
         currentUser = user;
         document.getElementById('auth-screen').classList.remove('active');
         document.getElementById('app-screen').classList.add('active');
-        initApp();
+        if (SAVE_MODE) {
+          initSavePage();
+        } else {
+          initApp();
+        }
       } else {
         currentUser = null;
         document.getElementById('auth-screen').classList.add('active');
         document.getElementById('app-screen').classList.remove('active');
       }
     });
+
+    function initSavePage() {
+      // Show only the save page, nothing else
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.getElementById('page-save').classList.add('active');
+      document.getElementById('bottom-nav').style.display = 'none';
+      document.getElementById('sidebar').style.display = 'none';
+      const pending = JSON.parse(sessionStorage.getItem('pendingRide') || '{}');
+      window._pendingRide = pending;
+      const boardLabel = pending.boardType === 'onewheel' ? 'Onewheel' : 'EUC';
+      document.getElementById('save-title').value = boardLabel + ' ride';
+      document.getElementById('save-notes').value = '';
+      document.getElementById('save-public').checked = false;
+      document.getElementById('save-public-text').textContent = 'Private';
+      document.getElementById('save-public').onchange = function() {
+        document.getElementById('save-public-text').textContent = this.checked ? 'Public (shareable)' : 'Private';
+      };
+    }
 
     // ============ INIT ============
     function initApp() {
@@ -385,6 +414,11 @@
     }
 
     window.discardRide = function() {
+      sessionStorage.removeItem('pendingRide');
+      if (SAVE_MODE) {
+        window.location.href = '/';
+        return;
+      }
       document.getElementById('page-record').style.display = '';
       showPage('record');
       resetRecordPage();
@@ -954,7 +988,7 @@ textarea { resize: vertical; }
     </header>
 
     <!-- Mobile Bottom Nav -->
-    <nav class="bottom-nav">
+    <nav class="bottom-nav" id="bottom-nav">
       <button class="nav-btn active" onclick="showPage('rides')" data-page="rides">
         <span class="nav-icon">⚡</span>
         <span>Rides</span>
@@ -976,7 +1010,7 @@ textarea { resize: vertical; }
     <div class="app-body">
 
     <!-- Desktop Sidebar -->
-    <nav class="sidebar">
+    <nav class="sidebar" id="sidebar">
       <p class="sidebar-label">Navigation</p>
       <button class="nav-btn active" onclick="showPage('rides')" data-page="rides">
         <span class="nav-icon">⚡</span>
