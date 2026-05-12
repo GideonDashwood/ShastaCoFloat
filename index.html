@@ -187,6 +187,11 @@
         return;
       }
       document.getElementById('page-save').style.display = 'none';
+      // Always wipe modal map canvas when navigating - prevents Android bleed
+      if (modalMapInstance) { modalMapInstance.remove(); mapInstances = mapInstances.filter(m => m !== modalMapInstance); modalMapInstance = null; }
+      const mm = document.getElementById('modal-map');
+      if (mm) mm.innerHTML = '';
+      document.getElementById('ride-modal').classList.remove('open');
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
       document.getElementById(`page-${page}`).classList.add('active');
@@ -288,6 +293,9 @@
     window.closeRideModal = function() {
       document.getElementById('ride-modal').classList.remove('open');
       if (modalMapInstance) { modalMapInstance.remove(); mapInstances = mapInstances.filter(m => m !== modalMapInstance); modalMapInstance = null; }
+      // Wipe canvas from DOM so it can't bleed through on Android
+      const mm = document.getElementById('modal-map');
+      if (mm) mm.innerHTML = '';
     }
 
     window.deleteRide = async function() {
