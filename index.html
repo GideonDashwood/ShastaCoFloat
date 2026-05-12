@@ -290,12 +290,8 @@
       routePoints = []; topSpeedMph = 0; startTime = Date.now();
       document.getElementById('pre-ride').style.display = 'none';
       document.getElementById('active-ride').style.display = 'block';
-      if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); }
-      recordMap = L.map('record-map', { zoomControl: false, attributionControl: false });
-      getMapTiles().addTo(recordMap);
-      recordMap.setView([0,0], 15);
-      mapInstances.push(recordMap);
-      recordPolyline = L.polyline([], { color: '#3ddc84', weight: 5 }).addTo(recordMap);
+      // No map during recording on mobile - prevents Android GPU bleed bug
+      recordPolyline = null;
       timerInterval = setInterval(updateTimer, 1000);
       watchId = navigator.geolocation.watchPosition(onGpsUpdate,
         err => { document.getElementById('gps-status').textContent = 'GPS error: ' + err.message; },
@@ -311,9 +307,7 @@
       document.getElementById('live-speed').textContent = speedMph.toFixed(1);
       document.getElementById('live-topspeed').textContent = topSpeedMph.toFixed(1);
       document.getElementById('live-dist').textContent = calcDistance(routePoints).toFixed(2);
-      const latlngs = routePoints.map(p => [p.lat, p.lng]);
-      recordPolyline.setLatLngs(latlngs);
-      recordMap.setView([lat, lng], 17);
+      // Map updates disabled during recording
     }
 
     function estimateSpeed() {
@@ -332,10 +326,7 @@
     window.stopRecording = function() {
       if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
       clearInterval(timerInterval);
-      // Destroy map BEFORE navigating away
-      if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); recordMap = null; }
-      const mapEl = document.getElementById('record-map');
-      if (mapEl) { mapEl.innerHTML = ''; mapEl.style.display = 'none'; }
+      // No map to destroy - not shown during recording
       // Navigate to save page (completely different page, no map anywhere)
       showPage('save');
       document.getElementById('save-title').value = selectedBoard.type === 'onewheel' ? 'Onewheel ride' : 'EUC ride';
@@ -404,8 +395,7 @@
     }
 
     function resetRecordPage() {
-      const mapEl = document.getElementById('record-map');
-      if (mapEl) { mapEl.style.display = 'block'; mapEl.innerHTML = ''; }
+
       document.getElementById('pre-ride').style.display = 'block';
       document.getElementById('active-ride').style.display = 'none';
       document.querySelectorAll('.board-card').forEach(c => c.classList.remove('selected'));
@@ -1106,7 +1096,7 @@ textarea { resize: vertical; }
               <label>mph top</label>
             </div>
           </div>
-          <div id="record-map" class="map-container"></div>
+          <div class="gps-status" id="gps-track-status" style="text-align:center;padding:0.75rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:0.85rem;color:var(--text3);margin-bottom:1rem;">📍 GPS tracking active — map visible after save</div>
           <button class="btn-stop" onclick="stopRecording()">⬛ Stop &amp; Save</button>
         </div>
 
