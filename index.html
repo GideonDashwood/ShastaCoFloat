@@ -326,8 +326,8 @@
     window.stopRecording = function() {
       if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
       clearInterval(timerInterval);
-      // No map to destroy - not shown during recording
-      // Navigate to save page (completely different page, no map anywhere)
+      // Hide record page content and show save page
+      document.getElementById('page-record').style.display = 'none';
       showPage('save');
       document.getElementById('save-title').value = selectedBoard.type === 'onewheel' ? 'Onewheel ride' : 'EUC ride';
       document.getElementById('save-notes').value = '';
@@ -376,8 +376,7 @@
           startedAt: new Date(startTime).toISOString(),
           createdAt: new Date().toISOString()
         });
-        document.getElementById('save-modal').classList.remove('open');
-        document.getElementById('save-page').style.display = 'none';
+        document.getElementById('page-record').style.display = '';
         resetRecordPage();
         toast('Ride saved! 🎉');
         loadRides();
@@ -386,8 +385,7 @@
     }
 
     window.discardRide = function() {
-      document.getElementById('save-modal').classList.remove('open');
-      document.getElementById('save-page').style.display = 'none';
+      document.getElementById('page-record').style.display = '';
       showPage('record');
       resetRecordPage();
       resetRecordPage();
