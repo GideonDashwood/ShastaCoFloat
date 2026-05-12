@@ -85,13 +85,13 @@
       </div>
     </header>
 
-    <!-- Nav -->
+    <!-- Mobile Bottom Nav -->
     <nav class="bottom-nav">
       <button class="nav-btn active" onclick="showPage('rides')" data-page="rides">
         <span class="nav-icon">⚡</span>
         <span>Rides</span>
       </button>
-      <button class="nav-btn record-btn" onclick="showPage('record')" data-page="record">
+      <button class="nav-btn" onclick="showPage('record')" data-page="record">
         <span class="nav-icon rec-dot">●</span>
         <span>Record</span>
       </button>
@@ -102,6 +102,30 @@
       <button class="nav-btn" onclick="showPage('profile')" data-page="profile">
         <span class="nav-icon">◎</span>
         <span>Me</span>
+      </button>
+    </nav>
+
+    <div class="app-body">
+
+    <!-- Desktop Sidebar -->
+    <nav class="sidebar">
+      <p class="sidebar-label">Navigation</p>
+      <button class="nav-btn active" onclick="showPage('rides')" data-page="rides">
+        <span class="nav-icon">⚡</span>
+        <span>My Rides</span>
+      </button>
+      <button class="nav-btn" onclick="showPage('record')" data-page="record">
+        <span class="nav-icon rec-dot">●</span>
+        <span>Record Ride</span>
+      </button>
+      <button class="nav-btn" onclick="showPage('log')" data-page="log">
+        <span class="nav-icon">✏️</span>
+        <span>Log Past Ride</span>
+      </button>
+      <p class="sidebar-label">Account</p>
+      <button class="nav-btn" onclick="showPage('profile')" data-page="profile">
+        <span class="nav-icon">◎</span>
+        <span>Profile</span>
       </button>
     </nav>
 
@@ -269,6 +293,8 @@
       </div>
 
     </main>
+
+    </div><!-- end app-body -->
 
     <!-- Ride Detail Modal -->
     <div id="ride-modal" class="modal" onclick="closeModal(event)">
