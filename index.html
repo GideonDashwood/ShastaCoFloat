@@ -4,27 +4,858 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RideLogger</title>
-  <meta name="description" content="Track your Onewheel & EUC rides" />
-  <meta name="theme-color" content="#0f1a14" media="(prefers-color-scheme: dark)" />
-  <meta name="theme-color" content="#f0f7f2" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#f97316" />
   <link rel="manifest" href="manifest.json" />
-  <link rel="apple-touch-icon" href="icons/icon-192.png" />
-
-  <!-- Fonts -->
+  <link rel="apple-touch-icon" href="icon-192.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
+    import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js";
+    import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, where, orderBy, updateDoc } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
 
-  <!-- Leaflet map -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyC5OmjOLKGV-UjTpCkE3Rz8upeac9QezQI",
+      authDomain: "shastacofloat.firebaseapp.com",
+      projectId: "shastacofloat",
+      storageBucket: "shastacofloat.firebasestorage.app",
+      messagingSenderId: "1008025828882",
+      appId: "1:1008025828882:web:2c2b3d6c7f5bb444ed62cb"
+    };
 
-  <!-- Supabase -->
-  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
 
-  <link rel="stylesheet" href="css/style.css" />
+    // ============ STATE ============
+    let currentUser = null;
+    let selectedBoard = { type: null, model: null };
+    let watchId = null;
+    let routePoints = [];
+    let recordMap = null;
+    let recordPolyline = null;
+    let startTime = null;
+    let timerInterval = null;
+    let topSpeedMph = 0;
+    let currentRideId = null;
+    let modalMapInstance = null;
+    let allRides = [];
+    let mapInstances = [];
+
+    // ============ THEME ============
+    const savedTheme = localStorage.getItem('rl-theme') || 'dark';
+    document.body.setAttribute('data-theme', savedTheme);
+    document.addEventListener('DOMContentLoaded', () => updateThemeIcon(savedTheme));
+
+    function toggleTheme() {
+      const current = document.body.getAttribute('data-theme');
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.body.setAttribute('data-theme', next);
+      localStorage.setItem('rl-theme', next);
+      updateThemeIcon(next);
+      updateMapTiles();
+    }
+    window.toggleTheme = toggleTheme;
+
+    function updateThemeIcon(theme) {
+      const el = document.getElementById('theme-icon');
+      if (el) el.textContent = theme === 'dark' ? '☀️' : '🌙';
+    }
+
+    function getMapTiles() {
+      const theme = document.body.getAttribute('data-theme');
+      if (theme === 'dark') {
+        return L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+          attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 19
+        });
+      } else {
+        return L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap contributors', maxZoom: 19
+        });
+      }
+    }
+
+    function updateMapTiles() {
+      mapInstances.forEach(map => {
+        if (map) {
+          map.eachLayer(layer => { if (layer instanceof L.TileLayer) map.removeLayer(layer); });
+          getMapTiles().addTo(map);
+        }
+      });
+    }
+
+    // ============ AUTH ============
+    window.showTab = function(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelector(`[onclick="showTab('${tab}')"]`).classList.add('active');
+      document.getElementById('login-form').style.display = tab === 'login' ? 'block' : 'none';
+      document.getElementById('signup-form').style.display = tab === 'signup' ? 'block' : 'none';
+    }
+
+    window.signIn = async function() {
+      const email = document.getElementById('login-email').value.trim();
+      const password = document.getElementById('login-password').value;
+      const errEl = document.getElementById('auth-error');
+      errEl.textContent = '';
+      try {
+        await signInWithEmailAndPassword(auth, email, password);
+      } catch(e) {
+        errEl.textContent = e.message;
+      }
+    }
+
+    window.signUp = async function() {
+      const name = document.getElementById('signup-name').value.trim();
+      const email = document.getElementById('signup-email').value.trim();
+      const password = document.getElementById('signup-password').value;
+      const errEl = document.getElementById('auth-error');
+      errEl.textContent = '';
+      if (!name) { errEl.textContent = 'Please enter your name.'; return; }
+      try {
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        await updateProfile(cred.user, { displayName: name });
+      } catch(e) {
+        errEl.textContent = e.message;
+      }
+    }
+
+    window.signOut = async function() {
+      await signOut(auth);
+    }
+
+    onAuthStateChanged(auth, user => {
+      if (user) {
+        currentUser = user;
+        document.getElementById('auth-screen').classList.remove('active');
+        document.getElementById('app-screen').classList.add('active');
+        initApp();
+      } else {
+        currentUser = null;
+        document.getElementById('auth-screen').classList.add('active');
+        document.getElementById('app-screen').classList.remove('active');
+      }
+    });
+
+    // ============ INIT ============
+    function initApp() {
+      const name = currentUser.displayName || currentUser.email || '';
+      const initials = name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0,2) || '?';
+      document.getElementById('user-avatar').textContent = initials;
+      document.getElementById('user-email-display').textContent = currentUser.email;
+      const now = new Date();
+      now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+      document.getElementById('log-date').value = now.toISOString().slice(0,16);
+      loadRides();
+    }
+
+    // ============ NAVIGATION ============
+    window.showPage = function(page) {
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById(`page-${page}`).classList.add('active');
+      document.querySelectorAll(`[data-page="${page}"]`).forEach(b => b.classList.add('active'));
+      if (page === 'profile') loadProfileStats();
+    }
+
+    // ============ RIDES ============
+    async function loadRides() {
+      const boardFilter = document.getElementById('filter-board')?.value;
+      try {
+        let q = query(collection(db, 'rides'), where('userId', '==', currentUser.uid));
+        const snap = await getDocs(q);
+        allRides = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        allRides.sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
+        if (boardFilter) allRides = allRides.filter(r => r.boardType === boardFilter);
+        renderRidesList(allRides);
+        updateStatsBar(allRides);
+      } catch(e) {
+        console.error(e);
+      }
+    }
+    window.loadRides = loadRides;
+
+    function renderRidesList(rides) {
+      const el = document.getElementById('rides-list');
+      if (!rides.length) {
+        el.innerHTML = '<p class="empty-state">No rides yet. Hit Record to start your first!</p>';
+        return;
+      }
+      el.innerHTML = rides.map(r => {
+        const date = new Date(r.startedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const time = new Date(r.startedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        const dist = (r.distanceKm || 0).toFixed(2);
+        const dur = formatDuration(r.durationSeconds || 0);
+        const top = (r.topSpeedKmh || 0).toFixed(1);
+        const boardLabel = r.boardType === 'onewheel' ? `OW ${r.boardModel || ''}`.trim() : 'EUC';
+        return `<div class="ride-card" onclick="openRide('${r.id}')">
+          <div class="ride-card-left">
+            <div class="ride-title">${escHtml(r.title || 'Untitled Ride')}</div>
+            <div class="ride-meta">${date} · ${time}</div>
+            <div class="ride-stats">
+              <div class="ride-stat-item"><span class="ride-stat-val">${dist}</span><span class="ride-stat-lbl">mi</span></div>
+              <div class="ride-stat-item"><span class="ride-stat-val">${dur}</span><span class="ride-stat-lbl">time</span></div>
+              <div class="ride-stat-item"><span class="ride-stat-val">${top}</span><span class="ride-stat-lbl">top mph</span></div>
+            </div>
+          </div>
+          <span class="board-badge">${boardLabel}</span>
+        </div>`;
+      }).join('');
+    }
+
+    function updateStatsBar(rides) {
+      document.getElementById('stat-total').textContent = rides.length;
+      document.getElementById('stat-mi').textContent = rides.reduce((s,r) => s+(r.distanceKm||0), 0).toFixed(1);
+      document.getElementById('stat-topspeed').textContent = rides.reduce((s,r) => Math.max(s, r.topSpeedKmh||0), 0).toFixed(1);
+    }
+
+    // ============ RIDE DETAIL ============
+    window.openRide = function(id) {
+      currentRideId = id;
+      const ride = allRides.find(r => r.id === id);
+      if (!ride) return;
+      document.getElementById('ride-modal').classList.add('open');
+      setTimeout(() => {
+        if (modalMapInstance) { modalMapInstance.remove(); mapInstances = mapInstances.filter(m => m !== modalMapInstance); }
+        modalMapInstance = L.map('modal-map', { zoomControl: true, scrollWheelZoom: false });
+        getMapTiles().addTo(modalMapInstance);
+        mapInstances.push(modalMapInstance);
+        const route = ride.route || [];
+        if (route.length > 1) {
+          const latlngs = route.map(p => [p.lat, p.lng]);
+          L.polyline(latlngs, { color: '#3ddc84', weight: 4, opacity: 0.9 }).addTo(modalMapInstance);
+          modalMapInstance.fitBounds(latlngs);
+          L.circleMarker(latlngs[0], { color: '#3ddc84', radius: 6, fillOpacity: 1 }).addTo(modalMapInstance);
+          L.circleMarker(latlngs[latlngs.length-1], { color: '#e05555', radius: 6, fillOpacity: 1 }).addTo(modalMapInstance);
+        } else {
+          modalMapInstance.setView([37.7749, -122.4194], 13);
+        }
+      }, 100);
+      const date = new Date(ride.startedAt).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+      const boardLabel = ride.boardType === 'onewheel' ? `Onewheel ${ride.boardModel || ''}`.trim() : 'EUC';
+      document.getElementById('modal-content').innerHTML = `
+        <div class="modal-content-section">
+          <h2 style="font-family:var(--font-mono);font-size:1.1rem;margin-bottom:4px">${escHtml(ride.title||'Untitled Ride')}</h2>
+          <p style="font-size:0.82rem;color:var(--text3);margin-bottom:0.75rem">${date} · <span class="board-badge">${boardLabel}</span></p>
+          <div class="modal-stat-row">
+            <div class="modal-stat"><span>${(ride.distanceKm||0).toFixed(2)}</span><label>mi</label></div>
+            <div class="modal-stat"><span>${formatDuration(ride.durationSeconds||0)}</span><label>duration</label></div>
+            <div class="modal-stat"><span>${(ride.topSpeedKmh||0).toFixed(1)}</span><label>top mph</label></div>
+            <div class="modal-stat"><span>${(ride.avgSpeedKmh||0).toFixed(1)}</span><label>avg mph</label></div>
+          </div>
+          ${ride.notes ? `<p style="font-size:0.88rem;color:var(--text2);background:var(--surface);border-radius:var(--radius-sm);padding:0.75rem;border:1px solid var(--border)">${escHtml(ride.notes)}</p>` : ''}
+        </div>`;
+    }
+
+    window.closeModal = function(e) { if (e.target === document.getElementById('ride-modal')) closeRideModal(); }
+    window.closeRideModal = function() {
+      document.getElementById('ride-modal').classList.remove('open');
+      if (modalMapInstance) { modalMapInstance.remove(); mapInstances = mapInstances.filter(m => m !== modalMapInstance); modalMapInstance = null; }
+    }
+
+    window.deleteRide = async function() {
+      if (!confirm('Delete this ride? This cannot be undone.')) return;
+      await deleteDoc(doc(db, 'rides', currentRideId));
+      closeRideModal();
+      toast('Ride deleted');
+      loadRides();
+    }
+
+    window.shareRide = async function() {
+      const ride = allRides.find(r => r.id === currentRideId);
+      if (!ride) return;
+      const url = `${location.origin}${location.pathname}?ride=${currentRideId}`;
+      if (navigator.share) {
+        navigator.share({ title: ride.title || 'My Ride', url }).catch(() => {});
+      } else {
+        navigator.clipboard.writeText(url).then(() => toast('Link copied!')).catch(() => toast('Copy: ' + url));
+      }
+    }
+
+    // ============ RECORD ============
+    window.selectBoard = function(type, model) {
+      selectedBoard = { type, model };
+      document.querySelectorAll('.board-card').forEach(c => c.classList.remove('selected'));
+      document.querySelector(`[data-board="${type}-${model}"]`).classList.add('selected');
+      document.getElementById('start-btn').disabled = false;
+      document.getElementById('gps-status').textContent = 'GPS ready — tap Start Ride';
+    }
+
+    window.startRecording = function() {
+      if (!selectedBoard.type) return;
+      if (!navigator.geolocation) { document.getElementById('gps-status').textContent = 'GPS not supported'; return; }
+      routePoints = []; topSpeedMph = 0; startTime = Date.now();
+      document.getElementById('pre-ride').style.display = 'none';
+      document.getElementById('active-ride').style.display = 'block';
+      if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); }
+      recordMap = L.map('record-map', { zoomControl: false, attributionControl: false });
+      getMapTiles().addTo(recordMap);
+      recordMap.setView([0,0], 15);
+      mapInstances.push(recordMap);
+      recordPolyline = L.polyline([], { color: '#3ddc84', weight: 5 }).addTo(recordMap);
+      timerInterval = setInterval(updateTimer, 1000);
+      watchId = navigator.geolocation.watchPosition(onGpsUpdate,
+        err => { document.getElementById('gps-status').textContent = 'GPS error: ' + err.message; },
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
+      );
+    }
+
+    function onGpsUpdate(pos) {
+      const { latitude: lat, longitude: lng, speed } = pos.coords;
+      routePoints.push({ lat, lng, ts: Date.now() });
+      const speedMph = speed != null ? speed * 2.23694 : estimateSpeed();
+      if (speedMph > topSpeedMph) topSpeedMph = speedMph;
+      document.getElementById('live-speed').textContent = speedMph.toFixed(1);
+      document.getElementById('live-topspeed').textContent = topSpeedMph.toFixed(1);
+      document.getElementById('live-dist').textContent = calcDistance(routePoints).toFixed(2);
+      const latlngs = routePoints.map(p => [p.lat, p.lng]);
+      recordPolyline.setLatLngs(latlngs);
+      recordMap.setView([lat, lng], 17);
+    }
+
+    function estimateSpeed() {
+      if (routePoints.length < 2) return 0;
+      const a = routePoints[routePoints.length-2], b = routePoints[routePoints.length-1];
+      const d = haversine(a.lat, a.lng, b.lat, b.lng);
+      const t = (b.ts - a.ts) / 3600000;
+      return t > 0 ? d / t : 0;
+    }
+
+    function updateTimer() {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      document.getElementById('live-time').textContent = formatDuration(elapsed);
+    }
+
+    window.stopRecording = function() {
+      if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+      clearInterval(timerInterval);
+      openSaveModal();
+    }
+
+    function openSaveModal() {
+      document.getElementById('save-title').value = `${selectedBoard.type === 'onewheel' ? 'Onewheel' : 'EUC'} ride`;
+      document.getElementById('save-notes').value = '';
+      document.getElementById('save-public').checked = false;
+      document.getElementById('save-public-text').textContent = 'Private';
+      document.getElementById('save-public').onchange = function() {
+        document.getElementById('save-public-text').textContent = this.checked ? 'Public (shareable)' : 'Private';
+      };
+      document.getElementById('save-modal').classList.add('open');
+    }
+
+    window.confirmSave = async function() {
+      const title = document.getElementById('save-title').value.trim() || 'Untitled Ride';
+      const notes = document.getElementById('save-notes').value.trim();
+      const durationSec = Math.floor((Date.now() - startTime) / 1000);
+      const distKm = calcDistance(routePoints);
+      const avgSpeed = durationSec > 0 ? distKm / (durationSec / 3600) : 0;
+      try {
+        await addDoc(collection(db, 'rides'), {
+          userId: currentUser.uid,
+          title, notes,
+          boardType: selectedBoard.type,
+          boardModel: selectedBoard.model || null,
+          route: routePoints,
+          distanceKm: parseFloat(distKm.toFixed(3)),
+          durationSeconds: durationSec,
+          topSpeedKmh: parseFloat(topSpeedMph.toFixed(2)),
+          avgSpeedKmh: parseFloat(avgSpeed.toFixed(2)),
+          startedAt: new Date(startTime).toISOString(),
+          createdAt: new Date().toISOString()
+        });
+        document.getElementById('save-modal').classList.remove('open');
+        resetRecordPage();
+        toast('Ride saved! 🎉');
+        loadRides();
+        showPage('rides');
+      } catch(e) { toast('Error saving: ' + e.message); }
+    }
+
+    window.discardRide = function() {
+      document.getElementById('save-modal').classList.remove('open');
+      resetRecordPage();
+      toast('Ride discarded');
+    }
+
+    function resetRecordPage() {
+      document.getElementById('pre-ride').style.display = 'block';
+      document.getElementById('active-ride').style.display = 'none';
+      document.querySelectorAll('.board-card').forEach(c => c.classList.remove('selected'));
+      document.getElementById('start-btn').disabled = true;
+      document.getElementById('gps-status').textContent = 'Select a board to begin';
+      selectedBoard = { type: null, model: null };
+      if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); recordMap = null; }
+    }
+
+    // ============ LOG RIDE ============
+    window.updateModelOptions = function() {
+      const type = document.getElementById('log-board-type').value;
+      const row = document.getElementById('model-row');
+      const sel = document.getElementById('log-board-model');
+      if (type === 'onewheel') {
+        row.style.display = 'block';
+        sel.innerHTML = '<option value="GTS-XL">GTS XL</option><option value="GTS">GTS</option><option value="GT">GT</option><option value="XR-C">XR-C</option><option value="XR">XR</option><option value="Pint S">Pint S</option><option value="Pint X">Pint X</option><option value="Pint">Pint</option>';
+      } else { row.style.display = 'none'; }
+    }
+
+    window.saveLoggedRide = async function() {
+      const errEl = document.getElementById('log-error');
+      errEl.textContent = '';
+      const title = document.getElementById('log-title').value.trim() || 'Untitled Ride';
+      const boardType = document.getElementById('log-board-type').value;
+      const boardModel = boardType === 'onewheel' ? document.getElementById('log-board-model').value : null;
+      const dateVal = document.getElementById('log-date').value;
+      const distKm = parseFloat(document.getElementById('log-distance').value) || 0;
+      const durMin = parseInt(document.getElementById('log-duration').value) || 0;
+      const topSpeed = parseFloat(document.getElementById('log-topspeed').value) || 0;
+      const avgSpeed = parseFloat(document.getElementById('log-avgspeed').value) || 0;
+      const notes = document.getElementById('log-notes').value.trim();
+      try {
+        await addDoc(collection(db, 'rides'), {
+          userId: currentUser.uid, title, boardType, boardModel,
+          startedAt: dateVal ? new Date(dateVal).toISOString() : new Date().toISOString(),
+          distanceKm: distKm, durationSeconds: durMin * 60,
+          topSpeedKmh: topSpeed, avgSpeedKmh: avgSpeed,
+          notes, route: [], createdAt: new Date().toISOString()
+        });
+        document.getElementById('log-title').value = '';
+        document.getElementById('log-distance').value = '';
+        document.getElementById('log-duration').value = '';
+        document.getElementById('log-topspeed').value = '';
+        document.getElementById('log-avgspeed').value = '';
+        document.getElementById('log-notes').value = '';
+        toast('Ride logged! ✅');
+        loadRides();
+        showPage('rides');
+      } catch(e) { errEl.textContent = e.message; }
+    }
+
+    // ============ PROFILE ============
+    async function loadProfileStats() {
+      try {
+        const q = query(collection(db, 'rides'), where('userId', '==', currentUser.uid));
+        const snap = await getDocs(q);
+        const data = snap.docs.map(d => d.data());
+        document.getElementById('prof-rides').textContent = data.length;
+        document.getElementById('prof-mi').textContent = data.reduce((s,r) => s+(r.distanceKm||0), 0).toFixed(1);
+        document.getElementById('prof-topspeed').textContent = data.reduce((s,r) => Math.max(s,r.topSpeedKmh||0), 0).toFixed(1);
+        document.getElementById('prof-time').textContent = (data.reduce((s,r) => s+(r.durationSeconds||0), 0) / 3600).toFixed(1);
+        const breakdown = {};
+        data.forEach(r => {
+          const key = r.boardType === 'onewheel' ? `Onewheel ${r.boardModel||''}`.trim() : 'EUC';
+          breakdown[key] = (breakdown[key]||0) + 1;
+        });
+        const el = document.getElementById('board-breakdown');
+        el.innerHTML = Object.entries(breakdown).sort((a,b)=>b[1]-a[1]).map(([k,v]) =>
+          `<div class="board-row"><span class="board-row-name">${k}</span><span class="board-row-count">${v} ride${v!==1?'s':''}</span></div>`
+        ).join('') || '<p style="color:var(--text3);font-size:0.88rem;text-align:center;padding:0.5rem">No rides yet</p>';
+      } catch(e) { console.error(e); }
+    }
+    window.loadProfileStats = loadProfileStats;
+
+    // ============ HELPERS ============
+    function calcDistance(points) {
+      let d = 0;
+      for (let i = 1; i < points.length; i++) d += haversine(points[i-1].lat, points[i-1].lng, points[i].lat, points[i].lng);
+      return d;
+    }
+    function haversine(lat1,lon1,lat2,lon2) {
+      const R=6371, dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
+      const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+      return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a))*0.621371;
+    }
+    function formatDuration(sec) {
+      const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+      if (h>0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+      return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    }
+    function escHtml(str) {
+      return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+    let toastTimer;
+    function toast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+    }
+    window.toast = toast;
+  </script>
+
+  <style>
+/* ============ VARIABLES ============ */
+:root {
+  --accent: #f97316;
+  --accent-dim: rgba(249,115,22,0.15);
+  --accent-border: rgba(249,115,22,0.3);
+  --font-mono: 'Space Mono', monospace;
+  --font-sans: 'DM Sans', sans-serif;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --nav-h: 64px;
+  --top-h: 60px;
+  --sidebar-w: 220px;
+}
+
+[data-theme="light"] {
+  --bg: #fff7ed;
+  --bg2: #ffedd5;
+  --bg3: #ffffff;
+  --surface: #ffffff;
+  --surface2: #f5faf6;
+  --border: rgba(0,0,0,0.08);
+  --border2: rgba(0,0,0,0.14);
+  --text: #1a0900;
+  --text2: #7c3a10;
+  --text3: #a36030;
+  --nav-bg: rgba(255,247,237,0.97);
+  --top-bg: rgba(255,247,237,0.97);
+  --modal-bg: rgba(0,0,0,0.45);
+  --live-bg: #1a0900;
+  --live-text: #fb923c;
+}
+
+[data-theme="dark"] {
+  --bg: #110900;
+  --bg2: #1a0f00;
+  --bg3: #1f1200;
+  --surface: #261500;
+  --surface2: #2e1a00;
+  --border: rgba(255,255,255,0.07);
+  --border2: rgba(255,255,255,0.12);
+  --text: #fff1e6;
+  --text2: #d4956a;
+  --text3: #8a5a35;
+  --nav-bg: rgba(17,9,0,0.97);
+  --top-bg: rgba(17,9,0,0.97);
+  --modal-bg: rgba(0,0,0,0.75);
+  --live-bg: #110900;
+  --live-text: #fb923c;
+}
+
+/* ============ RESET ============ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100dvh;
+  transition: background 0.3s, color 0.3s;
+}
+input, select, textarea, button { font-family: var(--font-sans); }
+
+/* ============ SCREENS ============ */
+.screen { display: none; min-height: 100dvh; }
+.screen.active { display: flex; flex-direction: column; }
+
+/* ============ AUTH ============ */
+#auth-screen {
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  position: relative;
+  overflow: hidden;
+}
+.auth-bg { position: absolute; inset: 0; pointer-events: none; }
+.auth-orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.2; }
+.orb1 { width: 400px; height: 400px; background: var(--accent); top: -120px; left: -120px; }
+.orb2 { width: 300px; height: 300px; background: #c2410c; bottom: -80px; right: -60px; }
+.auth-card {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 20px;
+  padding: 2.5rem 2rem;
+  width: min(420px, 92vw);
+  position: relative;
+  z-index: 1;
+}
+.logo { display: flex; align-items: center; gap: 12px; margin-bottom: 0.4rem; }
+.logo-text { font-family: var(--font-mono); font-size: 1.4rem; font-weight: 700; color: var(--accent); letter-spacing: -0.5px; }
+.auth-tagline { color: var(--text3); font-size: 0.9rem; margin-bottom: 1.75rem; }
+.tab-row { display: flex; border: 1px solid var(--border2); border-radius: var(--radius-sm); overflow: hidden; margin-bottom: 1.25rem; }
+.tab { flex: 1; padding: 0.65rem; background: transparent; border: none; color: var(--text3); cursor: pointer; font-size: 0.95rem; transition: all 0.2s; }
+.tab.active { background: var(--accent); color: #1a0800; font-weight: 600; }
+
+/* ============ INPUTS ============ */
+input, select, textarea {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.95rem;
+  margin-bottom: 0.75rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+textarea { resize: vertical; }
+
+/* ============ BUTTONS ============ */
+.btn-primary {
+  width: 100%; padding: 0.85rem;
+  background: var(--accent); color: #1a0800;
+  border: none; border-radius: var(--radius-sm);
+  font-size: 1rem; font-weight: 600; cursor: pointer;
+  transition: opacity 0.2s, transform 0.1s;
+  margin-top: 0.25rem;
+}
+.btn-primary:hover { opacity: 0.88; }
+.btn-primary:active { transform: scale(0.98); }
+.btn-primary:disabled { opacity: 0.35; cursor: not-allowed; }
+.btn-secondary {
+  width: 100%; padding: 0.75rem;
+  background: transparent; color: var(--text2);
+  border: 1px solid var(--border2); border-radius: var(--radius-sm);
+  font-size: 0.95rem; cursor: pointer; margin-top: 0.5rem;
+  transition: background 0.2s;
+}
+.btn-secondary:hover { background: var(--bg2); }
+.error-msg { color: #e05555; font-size: 0.85rem; margin-top: 0.5rem; min-height: 1.2rem; }
+
+/* ============ APP SHELL ============ */
+#app-screen { background: var(--bg); overflow: hidden; height: 100dvh; display: flex; flex-direction: column; }
+
+.topbar {
+  height: var(--top-h);
+  background: var(--top-bg);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.25rem;
+  flex-shrink: 0;
+  z-index: 10;
+}
+.topbar-left { display: flex; align-items: center; gap: 10px; }
+.app-title { font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: var(--accent); }
+.topbar-right { display: flex; gap: 4px; align-items: center; }
+.icon-btn { background: transparent; border: none; cursor: pointer; padding: 8px; border-radius: 8px; font-size: 1.1rem; transition: background 0.2s; color: var(--text2); }
+.icon-btn:hover { background: var(--bg2); }
+
+/* ============ APP BODY ============ */
+.app-body { display: flex; flex: 1; overflow: hidden; }
+
+/* ============ SIDEBAR (hidden on mobile) ============ */
+.sidebar { display: none; }
+
+/* ============ BOTTOM NAV (mobile) ============ */
+.bottom-nav {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: var(--nav-h);
+  background: var(--nav-bg);
+  backdrop-filter: blur(16px);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  z-index: 100;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.nav-btn {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; gap: 2px;
+  background: transparent; border: none;
+  color: var(--text3); font-size: 0.7rem;
+  cursor: pointer; padding: 8px 0;
+  transition: color 0.2s;
+}
+.nav-btn.active { color: var(--accent); }
+.nav-icon { font-size: 1.25rem; }
+.rec-dot { color: #e05555; animation: pulse 2s infinite; }
+.nav-btn.active .rec-dot { color: var(--accent); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* ============ PAGES ============ */
+.pages { flex: 1; overflow: hidden; position: relative; }
+.page {
+  display: none;
+  height: calc(100dvh - var(--top-h) - var(--nav-h));
+  overflow-y: auto;
+  padding: 1.5rem 1.25rem calc(1.5rem + env(safe-area-inset-bottom));
+  -webkit-overflow-scrolling: touch;
+}
+.page.active { display: block; }
+.page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.25rem; }
+.page-header h1 { font-family: var(--font-mono); font-size: 1.5rem; font-weight: 700; color: var(--text); }
+
+/* ============ STATS BAR ============ */
+.stats-bar { display: flex; gap: 10px; margin-bottom: 1.25rem; }
+.stat-chip { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.75rem 0.5rem; text-align: center; }
+.stat-chip span { display: block; font-family: var(--font-mono); font-size: 1.3rem; font-weight: 700; color: var(--accent); }
+.stat-chip label { font-size: 0.68rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* ============ RIDES LIST ============ */
+.rides-list { display: flex; flex-direction: column; gap: 10px; }
+.empty-state { text-align: center; color: var(--text3); padding: 4rem 1rem; font-size: 0.95rem; }
+.ride-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1rem 1.1rem;
+  cursor: pointer; transition: border-color 0.2s, transform 0.1s;
+  display: flex; justify-content: space-between; align-items: flex-start;
+}
+.ride-card:hover { border-color: var(--accent-border); transform: translateY(-1px); }
+.ride-card:active { transform: scale(0.99); }
+.ride-card-left { flex: 1; min-width: 0; }
+.ride-title { font-weight: 600; font-size: 1rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+.ride-meta { font-size: 0.8rem; color: var(--text3); margin-bottom: 8px; }
+.ride-stats { display: flex; gap: 16px; font-family: var(--font-mono); font-size: 0.82rem; color: var(--text2); }
+.ride-stat-item { display: flex; flex-direction: column; }
+.ride-stat-val { font-weight: 700; color: var(--text); }
+.ride-stat-lbl { font-size: 0.65rem; color: var(--text3); }
+.board-badge { font-size: 0.7rem; font-weight: 600; padding: 4px 10px; border-radius: 20px; background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent-border); white-space: nowrap; flex-shrink: 0; margin-left: 10px; }
+.filter-row select { margin: 0; padding: 0.4rem 0.75rem; font-size: 0.88rem; width: auto; }
+
+/* ============ BOARD PICKER ============ */
+.picker-label { font-size: 0.82rem; color: var(--text3); margin-bottom: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; }
+.board-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.25rem; }
+.board-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.1rem; text-align: center; cursor: pointer; color: var(--text2); font-size: 0.92rem; transition: all 0.2s; }
+.board-card:hover { border-color: var(--accent-border); }
+.board-card.selected { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+.board-icon { font-size: 2rem; margin-bottom: 8px; }
+.gps-status { text-align: center; font-size: 0.84rem; color: var(--text3); margin-top: 0.75rem; }
+
+/* ============ LIVE RECORDING ============ */
+.live-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 1rem; }
+.live-stat { background: var(--live-bg); border: 1px solid var(--accent-border); border-radius: var(--radius); padding: 1rem; text-align: center; }
+.live-stat span { display: block; font-family: var(--font-mono); font-size: 1.75rem; font-weight: 700; color: var(--live-text); }
+.live-stat label { font-size: 0.72rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; }
+.btn-stop { width: 100%; margin-top: 1rem; padding: 0.9rem; background: #1a1000; color: #f87171; border: 1px solid #5a2a00; border-radius: var(--radius-sm); font-size: 1rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+.btn-stop:hover { background: #2a1a00; }
+
+/* ============ MAP ============ */
+.map-container { width: 100%; height: 280px; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); background: var(--bg2); }
+.modal-map { height: 260px; margin-bottom: 1.25rem; border-radius: var(--radius); }
+
+/* ============ FORM CARD ============ */
+.form-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; }
+.form-card label { display: block; font-size: 0.78rem; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+#model-row { margin-bottom: 0; }
+
+/* ============ PROFILE ============ */
+.profile-card { display: flex; flex-direction: column; align-items: center; padding: 2rem 0 1.5rem; gap: 0.6rem; }
+.avatar { width: 80px; height: 80px; border-radius: 50%; background: var(--accent-dim); border: 2px solid var(--accent-border); display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 1.6rem; font-weight: 700; color: var(--accent); }
+.user-email { color: var(--text3); font-size: 0.9rem; }
+.all-stats { margin-top: 0.5rem; }
+.all-stats h2 { font-family: var(--font-mono); font-size: 0.88rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.75rem; }
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 1rem; }
+.stat-block { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1rem; text-align: center; }
+.stat-block span { display: block; font-family: var(--font-mono); font-size: 1.6rem; font-weight: 700; color: var(--accent); }
+.stat-block label { font-size: 0.72rem; color: var(--text3); }
+.board-breakdown { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; }
+.board-row { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+.board-row:last-child { border-bottom: none; }
+.board-row-name { color: var(--text2); }
+.board-row-count { font-family: var(--font-mono); font-weight: 700; color: var(--accent); }
+
+/* ============ MODAL ============ */
+.modal { display: none; position: fixed; inset: 0; background: var(--modal-bg); z-index: 200; align-items: flex-end; justify-content: center; backdrop-filter: blur(4px); }
+.modal.open { display: flex; }
+.modal-inner { background: var(--bg3); border-radius: 20px 20px 0 0; width: 100%; max-width: 680px; max-height: 92dvh; overflow-y: auto; padding: 1.75rem 1.5rem; position: relative; }
+.save-modal-inner { border-radius: 20px; max-width: 460px; margin: auto; }
+.modal-close { position: absolute; top: 1rem; right: 1rem; background: var(--bg2); border: none; border-radius: 50%; width: 34px; height: 34px; cursor: pointer; color: var(--text2); font-size: 0.9rem; display: flex; align-items: center; justify-content: center; }
+.modal h2 { font-family: var(--font-mono); font-size: 1.15rem; margin-bottom: 1rem; color: var(--text); }
+.modal label { display: block; font-size: 0.78rem; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; margin-top: 0.75rem; }
+.modal-content-section { margin-top: 0.5rem; }
+.modal-stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 1rem; }
+.modal-stat { text-align: center; background: var(--surface); border-radius: var(--radius-sm); padding: 0.7rem 0.4rem; }
+.modal-stat span { display: block; font-family: var(--font-mono); font-size: 1rem; font-weight: 700; color: var(--accent); }
+.modal-stat label { font-size: 0.65rem; color: var(--text3); }
+.modal-actions { display: flex; gap: 10px; margin-top: 1rem; }
+.btn-share { flex: 1; padding: 0.8rem; background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); font-size: 0.92rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+.btn-share:hover { background: rgba(61,220,132,0.25); }
+.btn-delete { padding: 0.8rem 1.1rem; background: transparent; color: #e07070; border: 1px solid rgba(200,80,80,0.3); border-radius: var(--radius-sm); font-size: 0.92rem; cursor: pointer; transition: background 0.2s; }
+.btn-delete:hover { background: rgba(200,80,80,0.1); }
+
+/* ============ TOGGLE ============ */
+.toggle-row { display: flex; align-items: center; gap: 10px; margin-bottom: 1rem; }
+.toggle { display: none; }
+.toggle-label { width: 46px; height: 26px; background: var(--border2); border-radius: 13px; cursor: pointer; position: relative; transition: background 0.2s; margin: 0; flex-shrink: 0; }
+.toggle-label::after { content: ''; position: absolute; width: 20px; height: 20px; background: white; border-radius: 50%; top: 3px; left: 3px; transition: left 0.2s; }
+.toggle:checked + .toggle-label { background: var(--accent); }
+.toggle:checked + .toggle-label::after { left: 23px; }
+#save-public-text { font-size: 0.9rem; color: var(--text2); }
+
+/* ============ TOAST ============ */
+.toast { position: fixed; bottom: calc(var(--nav-h) + 16px); left: 50%; transform: translateX(-50%) translateY(20px); background: var(--surface); border: 1px solid var(--border2); border-radius: var(--radius-sm); padding: 0.7rem 1.4rem; font-size: 0.9rem; color: var(--text); opacity: 0; pointer-events: none; transition: opacity 0.3s, transform 0.3s; z-index: 999; white-space: nowrap; }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ============ DESKTOP 768px+ ============ */
+@media (min-width: 768px) {
+  :root { --top-h: 64px; }
+  body { overflow: auto; }
+  #app-screen { height: 100dvh; overflow: hidden; }
+
+  .bottom-nav { display: none; }
+
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    width: var(--sidebar-w);
+    flex-shrink: 0;
+    background: var(--nav-bg);
+    border-right: 1px solid var(--border);
+    padding: 1.25rem 0.75rem;
+    gap: 2px;
+    overflow-y: auto;
+  }
+  .sidebar-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text3);
+    padding: 0 0.75rem;
+    margin: 1rem 0 0.4rem;
+  }
+  .sidebar-label:first-child { margin-top: 0; }
+  .sidebar .nav-btn {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 0.65rem 0.75rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.92rem;
+    width: 100%;
+  }
+  .sidebar .nav-btn.active { background: var(--accent-dim); color: var(--accent); }
+  .sidebar .nav-btn:hover:not(.active) { background: var(--bg2); color: var(--text); }
+  .sidebar .nav-icon { font-size: 1.1rem; }
+
+  .pages { flex: 1; overflow: hidden; }
+  .page {
+    height: calc(100dvh - var(--top-h));
+    padding: 2rem 2.5rem;
+    max-width: none;
+  }
+
+  .board-grid { grid-template-columns: repeat(4, 1fr); }
+  .stats-grid { grid-template-columns: repeat(4, 1fr); }
+  .live-stats { grid-template-columns: repeat(4, 1fr); }
+  .map-container { height: 360px; }
+  .modal-map { height: 300px; }
+  .toast { bottom: 24px; }
+
+  /* Ride detail modal: centered box instead of bottom sheet */
+  .modal { align-items: center; }
+  .modal-inner { border-radius: 20px; max-width: 680px; }
+}
+
+@media (min-width: 1100px) {
+  :root { --sidebar-w: 240px; }
+  .page { padding: 2.5rem 3rem; }
+}
+
+  </style>
 </head>
 <body data-theme="dark">
+
 
   <!-- Auth Screen -->
   <div id="auth-screen" class="screen active">
@@ -146,8 +977,8 @@
         </div>
         <div id="stats-bar" class="stats-bar">
           <div class="stat-chip"><span id="stat-total">0</span><label>Rides</label></div>
-          <div class="stat-chip"><span id="stat-km">0</span><label>km total</label></div>
-          <div class="stat-chip"><span id="stat-topspeed">0</span><label>km/h top</label></div>
+          <div class="stat-chip"><span id="stat-mi">0</span><label>mi total</label></div>
+          <div class="stat-chip"><span id="stat-topspeed">0</span><label>mph top</label></div>
         </div>
         <div id="rides-list" class="rides-list">
           <p class="empty-state">No rides yet. Hit Record to start your first!</p>
@@ -165,17 +996,37 @@
           <div class="board-picker">
             <p class="picker-label">Which board?</p>
             <div class="board-grid">
-              <button class="board-card" onclick="selectBoard('onewheel','GT')" data-board="onewheel-GT">
-                <div class="board-icon">⭕</div>
-                <div>Onewheel GT</div>
+              <button class="board-card" onclick="selectBoard('onewheel','GTS-XL')" data-board="onewheel-GTS-XL">
+                <div class="board-icon">🟠</div>
+                <div>GTS XL</div>
               </button>
-              <button class="board-card" onclick="selectBoard('onewheel','Pint')" data-board="onewheel-Pint">
-                <div class="board-icon">⭕</div>
-                <div>Onewheel Pint</div>
+              <button class="board-card" onclick="selectBoard('onewheel','GTS')" data-board="onewheel-GTS">
+                <div class="board-icon">🟠</div>
+                <div>GTS</div>
+              </button>
+              <button class="board-card" onclick="selectBoard('onewheel','GT')" data-board="onewheel-GT">
+                <div class="board-icon">🟠</div>
+                <div>GT</div>
+              </button>
+              <button class="board-card" onclick="selectBoard('onewheel','XR-C')" data-board="onewheel-XR-C">
+                <div class="board-icon">🟠</div>
+                <div>XR-C</div>
               </button>
               <button class="board-card" onclick="selectBoard('onewheel','XR')" data-board="onewheel-XR">
-                <div class="board-icon">⭕</div>
-                <div>Onewheel XR</div>
+                <div class="board-icon">🟠</div>
+                <div>XR</div>
+              </button>
+              <button class="board-card" onclick="selectBoard('onewheel','Pint S')" data-board="onewheel-Pint S">
+                <div class="board-icon">🟠</div>
+                <div>Pint S</div>
+              </button>
+              <button class="board-card" onclick="selectBoard('onewheel','Pint X')" data-board="onewheel-Pint X">
+                <div class="board-icon">🟠</div>
+                <div>Pint X</div>
+              </button>
+              <button class="board-card" onclick="selectBoard('onewheel','Pint')" data-board="onewheel-Pint">
+                <div class="board-icon">🟠</div>
+                <div>Pint</div>
               </button>
               <button class="board-card" onclick="selectBoard('euc','')" data-board="euc-">
                 <div class="board-icon">🔘</div>
@@ -194,7 +1045,7 @@
           <div class="live-stats">
             <div class="live-stat">
               <span id="live-dist">0.00</span>
-              <label>km</label>
+              <label>mi</label>
             </div>
             <div class="live-stat">
               <span id="live-time">00:00</span>
@@ -202,11 +1053,11 @@
             </div>
             <div class="live-stat">
               <span id="live-speed">0.0</span>
-              <label>km/h now</label>
+              <label>mph now</label>
             </div>
             <div class="live-stat">
               <span id="live-topspeed">0.0</span>
-              <label>km/h top</label>
+              <label>mph top</label>
             </div>
           </div>
           <div id="record-map" class="map-container"></div>
@@ -243,7 +1094,7 @@
 
           <div class="form-row">
             <div>
-              <label>Distance (km)</label>
+              <label>Distance (mi)</label>
               <input type="number" id="log-distance" placeholder="0.0" step="0.1" min="0" />
             </div>
             <div>
@@ -254,11 +1105,11 @@
 
           <div class="form-row">
             <div>
-              <label>Top Speed (km/h)</label>
+              <label>Top Speed (mph)</label>
               <input type="number" id="log-topspeed" placeholder="0.0" step="0.1" min="0" />
             </div>
             <div>
-              <label>Avg Speed (km/h)</label>
+              <label>Avg Speed (mph)</label>
               <input type="number" id="log-avgspeed" placeholder="0.0" step="0.1" min="0" />
             </div>
           </div>
@@ -284,8 +1135,8 @@
           <h2>All-time stats</h2>
           <div class="stats-grid">
             <div class="stat-block"><span id="prof-rides">0</span><label>Total rides</label></div>
-            <div class="stat-block"><span id="prof-km">0</span><label>Total km</label></div>
-            <div class="stat-block"><span id="prof-topspeed">0</span><label>Top speed (km/h)</label></div>
+            <div class="stat-block"><span id="prof-mi">0</span><label>Total mi</label></div>
+            <div class="stat-block"><span id="prof-topspeed">0</span><label>Top speed (mph)</label></div>
             <div class="stat-block"><span id="prof-time">0</span><label>Hours ridden</label></div>
           </div>
           <div class="board-breakdown" id="board-breakdown"></div>
@@ -332,11 +1183,13 @@
 
   <div id="toast" class="toast"></div>
 
-  <script src="js/app.js"></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js');
-    }
-  </script>
+  
+  
+
+<script>
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").catch(e => console.log("SW error:", e));
+  }
+</script>
 </body>
 </html>
