@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RideLogger</title>
+  <meta name="description" content="Track your Onewheel & EUC rides" />
+  <meta name="theme-color" content="#0f1a14" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f0f7f2" media="(prefers-color-scheme: light)" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+
+  <!-- Leaflet map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Supabase -->
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body data-theme="dark">
+
+  <!-- Auth Screen -->
+  <div id="auth-screen" class="screen active">
+    <div class="auth-bg">
+      <div class="auth-orb orb1"></div>
+      <div class="auth-orb orb2"></div>
+    </div>
+    <div class="auth-card">
+      <div class="logo">
+        <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+          <circle cx="20" cy="20" r="18" stroke="var(--accent)" stroke-width="2"/>
+          <circle cx="20" cy="20" r="8" fill="var(--accent)"/>
+          <line x1="2" y1="20" x2="38" y2="20" stroke="var(--accent)" stroke-width="1.5" opacity="0.4"/>
+        </svg>
+        <span class="logo-text">RideLogger</span>
+      </div>
+      <p class="auth-tagline">Track every mile. Every board. Every ride.</p>
+
+      <div class="tab-row">
+        <button class="tab active" onclick="showTab('login')">Sign In</button>
+        <button class="tab" onclick="showTab('signup')">Sign Up</button>
+      </div>
+
+      <div id="login-form">
+        <input type="email" id="login-email" placeholder="Email" autocomplete="email" />
+        <input type="password" id="login-password" placeholder="Password" autocomplete="current-password" />
+        <button class="btn-primary" onclick="signIn()">Sign In</button>
+      </div>
+
+      <div id="signup-form" style="display:none">
+        <input type="text" id="signup-name" placeholder="Your name" />
+        <input type="email" id="signup-email" placeholder="Email" autocomplete="email" />
+        <input type="password" id="signup-password" placeholder="Password (min 6 chars)" autocomplete="new-password" />
+        <button class="btn-primary" onclick="signUp()">Create Account</button>
+      </div>
+
+      <p id="auth-error" class="error-msg"></p>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div id="app-screen" class="screen">
+
+    <!-- Top Bar -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <svg width="24" height="24" viewBox="0 0 40 40" fill="none">
+          <circle cx="20" cy="20" r="18" stroke="var(--accent)" stroke-width="2"/>
+          <circle cx="20" cy="20" r="8" fill="var(--accent)"/>
+        </svg>
+        <span class="app-title">RideLogger</span>
+      </div>
+      <div class="topbar-right">
+        <button class="icon-btn" onclick="toggleTheme()" title="Toggle theme">
+          <span id="theme-icon">☀️</span>
+        </button>
+        <button class="icon-btn" onclick="signOut()" title="Sign out">⏻</button>
+      </div>
+    </header>
+
+    <!-- Nav -->
+    <nav class="bottom-nav">
+      <button class="nav-btn active" onclick="showPage('rides')" data-page="rides">
+        <span class="nav-icon">⚡</span>
+        <span>Rides</span>
+      </button>
+      <button class="nav-btn record-btn" onclick="showPage('record')" data-page="record">
+        <span class="nav-icon rec-dot">●</span>
+        <span>Record</span>
+      </button>
+      <button class="nav-btn" onclick="showPage('log')" data-page="log">
+        <span class="nav-icon">✏️</span>
+        <span>Log Ride</span>
+      </button>
+      <button class="nav-btn" onclick="showPage('profile')" data-page="profile">
+        <span class="nav-icon">◎</span>
+        <span>Me</span>
+      </button>
+    </nav>
+
+    <!-- Pages -->
+    <main class="pages">
+
+      <!-- RIDES PAGE -->
+      <div id="page-rides" class="page active">
+        <div class="page-header">
+          <h1>My Rides</h1>
+          <div class="filter-row">
+            <select id="filter-board" onchange="loadRides()">
+              <option value="">All boards</option>
+              <option value="onewheel">Onewheel</option>
+              <option value="euc">EUC</option>
+            </select>
+          </div>
+        </div>
+        <div id="stats-bar" class="stats-bar">
+          <div class="stat-chip"><span id="stat-total">0</span><label>Rides</label></div>
+          <div class="stat-chip"><span id="stat-km">0</span><label>km total</label></div>
+          <div class="stat-chip"><span id="stat-topspeed">0</span><label>km/h top</label></div>
+        </div>
+        <div id="rides-list" class="rides-list">
+          <p class="empty-state">No rides yet. Hit Record to start your first!</p>
+        </div>
+      </div>
+
+      <!-- RECORD PAGE -->
+      <div id="page-record" class="page">
+        <div class="page-header">
+          <h1>Record Ride</h1>
+        </div>
+
+        <!-- Pre-ride setup -->
+        <div id="pre-ride">
+          <div class="board-picker">
+            <p class="picker-label">Which board?</p>
+            <div class="board-grid">
+              <button class="board-card" onclick="selectBoard('onewheel','GT')" data-board="onewheel-GT">
+                <div class="board-icon">⭕</div>
+                <div>Onewheel GT</div>
+              </button>
+              <button class="board-card" onclick="selectBoard('onewheel','Pint')" data-board="onewheel-Pint">
+                <div class="board-icon">⭕</div>
+                <div>Onewheel Pint</div>
+              </button>
+              <button class="board-card" onclick="selectBoard('onewheel','XR')" data-board="onewheel-XR">
+                <div class="board-icon">⭕</div>
+                <div>Onewheel XR</div>
+              </button>
+              <button class="board-card" onclick="selectBoard('euc','')" data-board="euc-">
+                <div class="board-icon">🔘</div>
+                <div>EUC</div>
+              </button>
+            </div>
+          </div>
+          <button class="btn-primary btn-start" onclick="startRecording()" id="start-btn" disabled>
+            Start Ride
+          </button>
+          <p id="gps-status" class="gps-status">Select a board to begin</p>
+        </div>
+
+        <!-- Active recording -->
+        <div id="active-ride" style="display:none">
+          <div class="live-stats">
+            <div class="live-stat">
+              <span id="live-dist">0.00</span>
+              <label>km</label>
+            </div>
+            <div class="live-stat">
+              <span id="live-time">00:00</span>
+              <label>duration</label>
+            </div>
+            <div class="live-stat">
+              <span id="live-speed">0.0</span>
+              <label>km/h now</label>
+            </div>
+            <div class="live-stat">
+              <span id="live-topspeed">0.0</span>
+              <label>km/h top</label>
+            </div>
+          </div>
+          <div id="record-map" class="map-container"></div>
+          <button class="btn-stop" onclick="stopRecording()">⬛ Stop &amp; Save</button>
+        </div>
+      </div>
+
+      <!-- LOG RIDE PAGE -->
+      <div id="page-log" class="page">
+        <div class="page-header">
+          <h1>Log Past Ride</h1>
+        </div>
+        <div class="form-card">
+          <label>Title</label>
+          <input type="text" id="log-title" placeholder="Morning session, trail run..." />
+
+          <label>Board</label>
+          <select id="log-board-type" onchange="updateModelOptions()">
+            <option value="onewheel">Onewheel</option>
+            <option value="euc">EUC</option>
+          </select>
+
+          <div id="model-row">
+            <label>Model</label>
+            <select id="log-board-model">
+              <option value="GT">GT</option>
+              <option value="Pint">Pint</option>
+              <option value="XR">XR</option>
+            </select>
+          </div>
+
+          <label>Date &amp; Time</label>
+          <input type="datetime-local" id="log-date" />
+
+          <div class="form-row">
+            <div>
+              <label>Distance (km)</label>
+              <input type="number" id="log-distance" placeholder="0.0" step="0.1" min="0" />
+            </div>
+            <div>
+              <label>Duration (min)</label>
+              <input type="number" id="log-duration" placeholder="0" min="0" />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label>Top Speed (km/h)</label>
+              <input type="number" id="log-topspeed" placeholder="0.0" step="0.1" min="0" />
+            </div>
+            <div>
+              <label>Avg Speed (km/h)</label>
+              <input type="number" id="log-avgspeed" placeholder="0.0" step="0.1" min="0" />
+            </div>
+          </div>
+
+          <label>Notes</label>
+          <textarea id="log-notes" placeholder="How was the ride?" rows="3"></textarea>
+
+          <button class="btn-primary" onclick="saveLoggedRide()">Save Ride</button>
+          <p id="log-error" class="error-msg"></p>
+        </div>
+      </div>
+
+      <!-- PROFILE PAGE -->
+      <div id="page-profile" class="page">
+        <div class="page-header">
+          <h1>Profile</h1>
+        </div>
+        <div class="profile-card">
+          <div class="avatar" id="user-avatar">?</div>
+          <p id="user-email-display" class="user-email"></p>
+        </div>
+        <div class="all-stats">
+          <h2>All-time stats</h2>
+          <div class="stats-grid">
+            <div class="stat-block"><span id="prof-rides">0</span><label>Total rides</label></div>
+            <div class="stat-block"><span id="prof-km">0</span><label>Total km</label></div>
+            <div class="stat-block"><span id="prof-topspeed">0</span><label>Top speed (km/h)</label></div>
+            <div class="stat-block"><span id="prof-time">0</span><label>Hours ridden</label></div>
+          </div>
+          <div class="board-breakdown" id="board-breakdown"></div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- Ride Detail Modal -->
+    <div id="ride-modal" class="modal" onclick="closeModal(event)">
+      <div class="modal-inner">
+        <button class="modal-close" onclick="closeRideModal()">✕</button>
+        <div id="modal-map" class="map-container modal-map"></div>
+        <div id="modal-content"></div>
+        <div class="modal-actions">
+          <button class="btn-share" onclick="shareRide()">Share Ride</button>
+          <button class="btn-delete" onclick="deleteRide()">Delete</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Save Ride Modal -->
+  <div id="save-modal" class="modal">
+    <div class="modal-inner save-modal-inner">
+      <h2>Save Ride</h2>
+      <label>Title</label>
+      <input type="text" id="save-title" placeholder="Give this ride a name" />
+      <label>Notes</label>
+      <textarea id="save-notes" placeholder="Anything memorable?" rows="3"></textarea>
+      <label>Make public (shareable)?</label>
+      <div class="toggle-row">
+        <input type="checkbox" id="save-public" class="toggle" />
+        <label for="save-public" class="toggle-label"></label>
+        <span id="save-public-text">Private</span>
+      </div>
+      <button class="btn-primary" onclick="confirmSave()">Save</button>
+      <button class="btn-secondary" onclick="discardRide()">Discard</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
+</body>
+</html>
