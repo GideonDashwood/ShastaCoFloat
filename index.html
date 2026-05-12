@@ -17,10 +17,8 @@
     import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js";
     import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, where, orderBy, updateDoc } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
 
-    // Check if we're in save mode (?save=1) - no map ever loads in this mode
     const SAVE_MODE = new URLSearchParams(window.location.search).get('save') === '1';
     if (SAVE_MODE) {
-      // Remove Leaflet script to ensure canvas never initializes
       document.querySelectorAll('script[src*="leaflet"]').forEach(s => s.remove());
     }
 
@@ -51,6 +49,34 @@
     let modalMapInstance = null;
     let allRides = [];
     let mapInstances = [];
+
+    // BLE state
+    let bleDevice = null;
+    let bleServer = null;
+    let bleConnected = false;
+    let boardSpeedMph = null;
+    let boardBattery = null;
+    let boardTempF = null;
+    let boardDutyCycle = null;
+
+    // Elevation state
+    let elevGainM = 0;
+    let elevLossM = 0;
+    let lastAltM = null;
+
+    // Onewheel BLE service + characteristic UUIDs
+    const OW_SERVICE   = 'e659f300-ea98-11e3-ac10-0800200c9a66';
+    const OW_CHAR_RPM  = 'e659f302-ea98-11e3-ac10-0800200c9a66';
+    const OW_CHAR_BATT = 'e659f303-ea98-11e3-ac10-0800200c9a66';
+    const OW_CHAR_DUTY = 'e659f30d-ea98-11e3-ac10-0800200c9a66';
+    const OW_CHAR_TEMP = 'e659f310-ea98-11e3-ac10-0800200c9a66';
+
+    // Tire circumference in inches per model for RPM → speed
+    const OW_WHEEL_CIRC = {
+      'GTS-XL': 36.5, 'GTS': 36.5, 'GT': 36.5,
+      'XR-C': 36.1, 'XR': 36.1,
+      'Pint S': 32.9, 'Pint X': 32.9, 'Pint': 32.9
+    };
 
     // ============ THEME ============
     const savedTheme = localStorage.getItem('rl-theme') || 'dark';
@@ -151,7 +177,6 @@
     });
 
     function initSavePage() {
-      // Show only the save page, nothing else
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       document.getElementById('page-save').classList.add('active');
       document.getElementById('bottom-nav').style.display = 'none';
@@ -187,7 +212,6 @@
         return;
       }
       document.getElementById('page-save').style.display = 'none';
-      // Always wipe modal map canvas when navigating - prevents Android bleed
       if (modalMapInstance) { modalMapInstance.remove(); mapInstances = mapInstances.filter(m => m !== modalMapInstance); modalMapInstance = null; }
       const mm = document.getElementById('modal-map');
       if (mm) mm.innerHTML = '';
@@ -275,6 +299,8 @@
       }, 100);
       const date = new Date(ride.startedAt).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
       const boardLabel = ride.boardType === 'onewheel' ? `Onewheel ${ride.boardModel || ''}`.trim() : 'EUC';
+      const elevUp = ride.elevGainFt != null ? `+${ride.elevGainFt.toFixed(0)}ft` : '--';
+      const elevDown = ride.elevLossFt != null ? `-${ride.elevLossFt.toFixed(0)}ft` : '--';
       document.getElementById('modal-content').innerHTML = `
         <div class="modal-content-section">
           <h2 style="font-family:var(--font-mono);font-size:1.1rem;margin-bottom:4px">${escHtml(ride.title||'Untitled Ride')}</h2>
@@ -285,6 +311,14 @@
             <div class="modal-stat"><span>${(ride.topSpeedKmh||0).toFixed(1)}</span><label>top mph</label></div>
             <div class="modal-stat"><span>${(ride.avgSpeedKmh||0).toFixed(1)}</span><label>avg mph</label></div>
           </div>
+          <div class="modal-stat-row">
+            <div class="modal-stat"><span>${elevUp}</span><label>elev gain</label></div>
+            <div class="modal-stat"><span>${elevDown}</span><label>elev loss</label></div>
+            ${ride.boardType === 'onewheel' ? `
+            <div class="modal-stat"><span>${ride.maxDutyCycle != null ? ride.maxDutyCycle.toFixed(0)+'%' : '--'}</span><label>max duty</label></div>
+            <div class="modal-stat"><span>${ride.avgBattery != null ? ride.avgBattery.toFixed(0)+'%' : '--'}</span><label>avg batt</label></div>
+            ` : '<div class="modal-stat"></div><div class="modal-stat"></div>'}
+          </div>
           ${ride.notes ? `<p style="font-size:0.88rem;color:var(--text2);background:var(--surface);border-radius:var(--radius-sm);padding:0.75rem;border:1px solid var(--border)">${escHtml(ride.notes)}</p>` : ''}
         </div>`;
     }
@@ -293,7 +327,6 @@
     window.closeRideModal = function() {
       document.getElementById('ride-modal').classList.remove('open');
       if (modalMapInstance) { modalMapInstance.remove(); mapInstances = mapInstances.filter(m => m !== modalMapInstance); modalMapInstance = null; }
-      // Wipe canvas from DOM so it can't bleed through on Android
       const mm = document.getElementById('modal-map');
       if (mm) mm.innerHTML = '';
     }
@@ -317,6 +350,113 @@
       }
     }
 
+    // ============ BLE ============
+    window.connectBLE = async function() {
+      if (!navigator.bluetooth) {
+        toast('Bluetooth not supported on this browser/device');
+        return;
+      }
+      if (bleConnected) {
+        disconnectBLE();
+        return;
+      }
+      setBleStatus('connecting');
+      try {
+        bleDevice = await navigator.bluetooth.requestDevice({
+          filters: [{ services: [OW_SERVICE] }],
+          optionalServices: [OW_SERVICE]
+        });
+        bleDevice.addEventListener('gattserverdisconnected', onBleDisconnected);
+        bleServer = await bleDevice.gatt.connect();
+        const service = await bleServer.getPrimaryService(OW_SERVICE);
+
+        await subscribeChar(service, OW_CHAR_RPM, onRpmData);
+        await subscribeChar(service, OW_CHAR_BATT, onBattData);
+        await subscribeChar(service, OW_CHAR_DUTY, onDutyData);
+        await subscribeChar(service, OW_CHAR_TEMP, onTempData);
+
+        bleConnected = true;
+        setBleStatus('connected', bleDevice.name || 'Onewheel');
+        toast('Board connected via Bluetooth');
+      } catch(e) {
+        bleConnected = false;
+        setBleStatus('idle');
+        if (e.name !== 'NotFoundError') toast('BLE error: ' + e.message);
+      }
+    }
+
+    async function subscribeChar(service, uuid, handler) {
+      try {
+        const char = await service.getCharacteristic(uuid);
+        await char.startNotifications();
+        char.addEventListener('characteristicvaluechanged', handler);
+      } catch(e) {
+        // characteristic may not be available on all firmware versions
+      }
+    }
+
+    function onRpmData(e) {
+      const rpm = e.target.value.getInt16(0, false);
+      const circ = OW_WHEEL_CIRC[selectedBoard.model] || 36.1;
+      // inches/rev * rev/min * 60min/hr / 63360in/mi
+      boardSpeedMph = Math.abs(rpm) * circ * 60 / 63360;
+      if (boardSpeedMph > topSpeedMph) topSpeedMph = boardSpeedMph;
+      document.getElementById('live-speed').textContent = boardSpeedMph.toFixed(1);
+      document.getElementById('live-topspeed').textContent = topSpeedMph.toFixed(1);
+    }
+
+    function onBattData(e) {
+      // Battery is typically in the second byte (index 1)
+      const raw = e.target.value;
+      boardBattery = raw.byteLength > 1 ? raw.getUint8(1) : raw.getUint8(0);
+      document.getElementById('live-battery').textContent = boardBattery + '%';
+    }
+
+    function onDutyData(e) {
+      const raw = e.target.value.getInt16(0, false);
+      boardDutyCycle = Math.abs(raw / 327.67);
+      document.getElementById('live-duty').textContent = boardDutyCycle.toFixed(0) + '%';
+    }
+
+    function onTempData(e) {
+      const tempC = e.target.value.getInt16(0, false) / 10;
+      boardTempF = tempC * 9 / 5 + 32;
+      document.getElementById('live-temp').textContent = boardTempF.toFixed(0) + '°';
+    }
+
+    function onBleDisconnected() {
+      bleConnected = false;
+      boardSpeedMph = null;
+      setBleStatus('idle');
+      toast('Board disconnected');
+    }
+
+    function disconnectBLE() {
+      if (bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
+      bleConnected = false;
+      boardSpeedMph = null;
+      setBleStatus('idle');
+    }
+
+    function setBleStatus(state, name) {
+      const btn = document.getElementById('ble-btn');
+      const dot = document.getElementById('ble-dot');
+      const liveLabel = document.getElementById('ble-live-label');
+      if (state === 'idle') {
+        if (btn) { btn.textContent = 'Connect Onewheel'; btn.classList.remove('ble-connected'); }
+        if (dot) dot.className = 'ble-dot';
+        if (liveLabel) liveLabel.textContent = 'no board';
+      } else if (state === 'connecting') {
+        if (btn) { btn.textContent = 'Connecting…'; btn.classList.remove('ble-connected'); }
+        if (dot) dot.className = 'ble-dot ble-dot-connecting';
+        if (liveLabel) liveLabel.textContent = 'connecting';
+      } else if (state === 'connected') {
+        if (btn) { btn.textContent = 'Disconnect ' + (name || 'Board'); btn.classList.add('ble-connected'); }
+        if (dot) dot.className = 'ble-dot ble-dot-on';
+        if (liveLabel) liveLabel.textContent = 'connected';
+      }
+    }
+
     // ============ RECORD ============
     window.selectBoard = function(type, model) {
       selectedBoard = { type, model };
@@ -324,14 +464,26 @@
       document.querySelector(`[data-board="${type}-${model}"]`).classList.add('selected');
       document.getElementById('start-btn').disabled = false;
       document.getElementById('gps-status').textContent = 'GPS ready — tap Start Ride';
+      const bleRow = document.getElementById('ble-row');
+      if (bleRow) bleRow.style.display = type === 'onewheel' ? 'block' : 'none';
     }
 
     window.startRecording = function() {
       if (!selectedBoard.type) return;
       if (!navigator.geolocation) { document.getElementById('gps-status').textContent = 'GPS not supported'; return; }
       routePoints = []; topSpeedMph = 0; startTime = Date.now();
+      elevGainM = 0; elevLossM = 0; lastAltM = null;
+      boardBattery = null; boardTempF = null; boardDutyCycle = null;
+      let battSamples = [], dutyMax = 0;
+      window._battSamples = battSamples;
+      window._dutyMax = dutyMax;
+
       document.getElementById('pre-ride').style.display = 'none';
       document.getElementById('active-ride').style.display = 'block';
+      // Show BLE stat row only when OW board
+      document.getElementById('ble-stats-row').style.display =
+        selectedBoard.type === 'onewheel' ? 'grid' : 'none';
+
       if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); recordMap = null; }
       const recMapEl = document.getElementById('record-map');
       if (recMapEl) { recMapEl.innerHTML = ''; recMapEl.style.display = 'block'; }
@@ -340,7 +492,12 @@
       recordMap.setView([0,0], 15);
       mapInstances.push(recordMap);
       recordPolyline = L.polyline([], { color: '#f97316', weight: 5 }).addTo(recordMap);
-      timerInterval = setInterval(updateTimer, 1000);
+      timerInterval = setInterval(() => {
+        updateTimer();
+        // Accumulate battery samples for avg
+        if (boardBattery != null) window._battSamples.push(boardBattery);
+        if (boardDutyCycle != null && boardDutyCycle > window._dutyMax) window._dutyMax = boardDutyCycle;
+      }, 1000);
       watchId = navigator.geolocation.watchPosition(onGpsUpdate,
         err => { document.getElementById('gps-status').textContent = 'GPS error: ' + err.message; },
         { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
@@ -348,12 +505,35 @@
     }
 
     function onGpsUpdate(pos) {
-      const { latitude: lat, longitude: lng, speed } = pos.coords;
+      const { latitude: lat, longitude: lng, speed, altitude, altitudeAccuracy } = pos.coords;
       routePoints.push({ lat, lng, ts: Date.now() });
-      const speedMph = speed != null ? speed * 2.23694 : estimateSpeed();
-      if (speedMph > topSpeedMph) topSpeedMph = speedMph;
-      document.getElementById('live-speed').textContent = speedMph.toFixed(1);
-      document.getElementById('live-topspeed').textContent = topSpeedMph.toFixed(1);
+
+      // Elevation tracking — ignore if alt unavailable or poor accuracy
+      if (altitude != null && (altitudeAccuracy == null || altitudeAccuracy < 30)) {
+        if (lastAltM != null) {
+          const delta = altitude - lastAltM;
+          if (Math.abs(delta) >= 1) {
+            if (delta > 0) elevGainM += delta;
+            else elevLossM += Math.abs(delta);
+            lastAltM = altitude;
+          }
+        } else {
+          lastAltM = altitude;
+        }
+      }
+      const gainFt = elevGainM * 3.28084;
+      const lossFt = elevLossM * 3.28084;
+      document.getElementById('live-elev-gain').textContent = '+' + gainFt.toFixed(0);
+      document.getElementById('live-elev-loss').textContent = '-' + lossFt.toFixed(0);
+
+      // Speed: prefer board (BLE) over GPS
+      if (!bleConnected || boardSpeedMph == null) {
+        const gpsMph = speed != null ? speed * 2.23694 : estimateSpeed();
+        if (gpsMph > topSpeedMph) topSpeedMph = gpsMph;
+        document.getElementById('live-speed').textContent = gpsMph.toFixed(1);
+        document.getElementById('live-topspeed').textContent = topSpeedMph.toFixed(1);
+      }
+
       document.getElementById('live-dist').textContent = calcDistance(routePoints).toFixed(2);
       if (recordPolyline) recordPolyline.setLatLngs(routePoints.map(p => [p.lat, p.lng]));
       if (recordMap) recordMap.setView([lat, lng], 17);
@@ -375,7 +555,6 @@
     window.stopRecording = function() {
       if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
       clearInterval(timerInterval);
-      // Destroy record map completely before showing save form
       if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); recordMap = null; }
       const recMapEl = document.getElementById('record-map');
       if (recMapEl) { recMapEl.innerHTML = ''; recMapEl.style.display = 'none'; }
@@ -390,30 +569,15 @@
       };
     }
 
-    function openSaveModal() {
-      // Destroy map completely before showing save screen
-      if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); recordMap = null; }
-      const mapEl = document.getElementById('record-map');
-      if (mapEl) { mapEl.style.display = 'none'; mapEl.innerHTML = ''; }
-      // Navigate to save page instead of modal to avoid Android map bleed
-      document.getElementById('active-ride').style.display = 'none';
-      document.getElementById('save-page').style.display = 'block';
-      document.getElementById('save-title').value = `${selectedBoard.type === 'onewheel' ? 'Onewheel' : 'EUC'} ride`;
-      document.getElementById('save-notes').value = '';
-      document.getElementById('save-public').checked = false;
-      document.getElementById('save-public-text').textContent = 'Private';
-      document.getElementById('save-public').onchange = function() {
-        document.getElementById('save-public-text').textContent = this.checked ? 'Public (shareable)' : 'Private';
-      };
-      document.getElementById('save-modal').classList.add('open');
-    }
-
     window.confirmSave = async function() {
       const title = document.getElementById('save-title').value.trim() || 'Untitled Ride';
       const notes = document.getElementById('save-notes').value.trim();
       const durationSec = Math.floor((Date.now() - startTime) / 1000);
       const distKm = calcDistance(routePoints);
       const avgSpeed = durationSec > 0 ? distKm / (durationSec / 3600) : 0;
+      const samples = window._battSamples || [];
+      const avgBatt = samples.length ? samples.reduce((a,b) => a+b, 0) / samples.length : null;
+      const maxDuty = window._dutyMax || null;
       try {
         await addDoc(collection(db, 'rides'), {
           userId: currentUser.uid,
@@ -425,13 +589,17 @@
           durationSeconds: durationSec,
           topSpeedKmh: parseFloat(topSpeedMph.toFixed(2)),
           avgSpeedKmh: parseFloat(avgSpeed.toFixed(2)),
+          elevGainFt: parseFloat((elevGainM * 3.28084).toFixed(1)),
+          elevLossFt: parseFloat((elevLossM * 3.28084).toFixed(1)),
+          avgBattery: avgBatt != null ? parseFloat(avgBatt.toFixed(1)) : null,
+          maxDutyCycle: maxDuty != null ? parseFloat(maxDuty.toFixed(1)) : null,
           startedAt: new Date(startTime).toISOString(),
           createdAt: new Date().toISOString()
         });
         document.getElementById('page-save').style.display = 'none';
-      document.getElementById('page-record').style.display = '';
+        document.getElementById('page-record').style.display = '';
         resetRecordPage();
-        toast('Ride saved! 🎉');
+        toast('Ride saved!');
         loadRides();
         showPage('rides');
       } catch(e) { toast('Error saving: ' + e.message); }
@@ -447,17 +615,17 @@
       document.getElementById('page-record').style.display = '';
       showPage('record');
       resetRecordPage();
-      resetRecordPage();
       toast('Ride discarded');
     }
 
     function resetRecordPage() {
-
       document.getElementById('pre-ride').style.display = 'block';
       document.getElementById('active-ride').style.display = 'none';
       document.querySelectorAll('.board-card').forEach(c => c.classList.remove('selected'));
       document.getElementById('start-btn').disabled = true;
       document.getElementById('gps-status').textContent = 'Select a board to begin';
+      const bleRow = document.getElementById('ble-row');
+      if (bleRow) { bleRow.style.display = 'none'; setBleStatus('idle'); }
       selectedBoard = { type: null, model: null };
       if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); recordMap = null; }
     }
@@ -499,7 +667,7 @@
         document.getElementById('log-topspeed').value = '';
         document.getElementById('log-avgspeed').value = '';
         document.getElementById('log-notes').value = '';
-        toast('Ride logged! ✅');
+        toast('Ride logged!');
         loadRides();
         showPage('rides');
       } catch(e) { errEl.textContent = e.message; }
@@ -794,11 +962,34 @@ textarea { resize: vertical; }
 .board-icon { font-size: 2rem; margin-bottom: 8px; }
 .gps-status { text-align: center; font-size: 0.84rem; color: var(--text3); margin-top: 0.75rem; }
 
+/* ============ BLE BUTTON ============ */
+#ble-row { display: none; margin-top: 0.75rem; }
+.btn-ble {
+  width: 100%; padding: 0.75rem;
+  background: transparent;
+  color: #60a5fa;
+  border: 1px solid rgba(96,165,250,0.35);
+  border-radius: var(--radius-sm);
+  font-size: 0.95rem; font-weight: 600; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  transition: background 0.2s;
+}
+.btn-ble:hover { background: rgba(96,165,250,0.08); }
+.btn-ble.ble-connected { color: #4ade80; border-color: rgba(74,222,128,0.35); }
+.btn-ble.ble-connected:hover { background: rgba(74,222,128,0.08); }
+.ble-dot { width: 8px; height: 8px; border-radius: 50%; background: #8a5a35; flex-shrink: 0; }
+.ble-dot-on { background: #4ade80; box-shadow: 0 0 6px #4ade80; }
+.ble-dot-connecting { background: #facc15; animation: pulse 1s infinite; }
+
 /* ============ LIVE RECORDING ============ */
-.live-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 1rem; }
+.live-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 0.75rem; }
 .live-stat { background: var(--live-bg); border: 1px solid var(--accent-border); border-radius: var(--radius); padding: 1rem; text-align: center; }
 .live-stat span { display: block; font-family: var(--font-mono); font-size: 1.75rem; font-weight: 700; color: var(--live-text); }
 .live-stat label { font-size: 0.72rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; }
+.live-stats-secondary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 1rem; }
+.live-stat-sm { background: var(--live-bg); border: 1px solid var(--border2); border-radius: var(--radius-sm); padding: 0.65rem 0.5rem; text-align: center; }
+.live-stat-sm span { display: block; font-family: var(--font-mono); font-size: 1.2rem; font-weight: 700; color: var(--text2); }
+.live-stat-sm label { font-size: 0.65rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; }
 .btn-stop { width: 100%; margin-top: 1rem; padding: 0.9rem; background: #1a1000; color: #f87171; border: 1px solid #5a2a00; border-radius: var(--radius-sm); font-size: 1rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
 .btn-stop:hover { background: #2a1a00; }
 
@@ -837,7 +1028,7 @@ textarea { resize: vertical; }
 .modal h2 { font-family: var(--font-mono); font-size: 1.15rem; margin-bottom: 1rem; color: var(--text); }
 .modal label { display: block; font-size: 0.78rem; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; margin-top: 0.75rem; }
 .modal-content-section { margin-top: 0.5rem; }
-.modal-stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 1rem; }
+.modal-stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 0.75rem; }
 .modal-stat { text-align: center; background: var(--surface); border-radius: var(--radius-sm); padding: 0.7rem 0.4rem; }
 .modal-stat span { display: block; font-family: var(--font-mono); font-size: 1rem; font-weight: 700; color: var(--accent); }
 .modal-stat label { font-size: 0.65rem; color: var(--text3); }
@@ -911,11 +1102,11 @@ textarea { resize: vertical; }
   .board-grid { grid-template-columns: repeat(4, 1fr); }
   .stats-grid { grid-template-columns: repeat(4, 1fr); }
   .live-stats { grid-template-columns: repeat(4, 1fr); }
+  .live-stats-secondary { grid-template-columns: repeat(4, 1fr); }
   .map-container { height: 360px; }
   .modal-map { height: 300px; }
   .toast { bottom: 24px; }
 
-  /* Ride detail modal: centered box instead of bottom sheet */
   .modal { align-items: center; }
   .modal-inner { border-radius: 20px; max-width: 680px; }
 }
@@ -925,7 +1116,6 @@ textarea { resize: vertical; }
   .page { padding: 2.5rem 3rem; }
 }
 
-  
 /* Force GPU layer isolation to prevent Leaflet map bleed-through on Android */
 .page {
   transform: translateZ(0);
@@ -942,16 +1132,13 @@ textarea { resize: vertical; }
   -webkit-transform: translateZ(0);
   transform: translateZ(0);
 }
-/* Kill any leftover leaflet canvas */
 #record-map canvas,
 #record-map .leaflet-container {
   display: none !important;
 }
-
 </style>
 </head>
 <body data-theme="dark">
-
 
   <!-- Auth Screen -->
   <div id="auth-screen" class="screen active">
@@ -1130,7 +1317,16 @@ textarea { resize: vertical; }
               </button>
             </div>
           </div>
-          <button class="btn-primary btn-start" onclick="startRecording()" id="start-btn" disabled>
+
+          <!-- BLE connect — only shown for Onewheel boards -->
+          <div id="ble-row">
+            <button class="btn-ble" id="ble-btn" onclick="connectBLE()">
+              <span class="ble-dot" id="ble-dot"></span>
+              Connect Onewheel
+            </button>
+          </div>
+
+          <button class="btn-primary btn-start" onclick="startRecording()" id="start-btn" disabled style="margin-top:0.75rem">
             Start Ride
           </button>
           <p id="gps-status" class="gps-status">Select a board to begin</p>
@@ -1138,6 +1334,7 @@ textarea { resize: vertical; }
 
         <!-- Active recording -->
         <div id="active-ride" style="display:none">
+          <!-- Primary stats: always visible -->
           <div class="live-stats">
             <div class="live-stat">
               <span id="live-dist">0.00</span>
@@ -1156,13 +1353,44 @@ textarea { resize: vertical; }
               <label>mph top</label>
             </div>
           </div>
+
+          <!-- Elevation row — always shown -->
+          <div class="live-stats-secondary">
+            <div class="live-stat-sm">
+              <span id="live-elev-gain">+0</span>
+              <label>gain ft</label>
+            </div>
+            <div class="live-stat-sm">
+              <span id="live-elev-loss">-0</span>
+              <label>loss ft</label>
+            </div>
+          </div>
+
+          <!-- BLE telemetry row — only shown for Onewheel -->
+          <div class="live-stats-secondary" id="ble-stats-row" style="display:none;margin-top:0;">
+            <div class="live-stat-sm">
+              <span id="live-battery">--%</span>
+              <label>battery</label>
+            </div>
+            <div class="live-stat-sm">
+              <span id="live-temp">--°</span>
+              <label>temp</label>
+            </div>
+            <div class="live-stat-sm">
+              <span id="live-duty">--%</span>
+              <label>duty cycle</label>
+            </div>
+            <div class="live-stat-sm" style="background:transparent;border-color:transparent;">
+              <span style="font-size:0.9rem;">📡</span>
+              <label id="ble-live-label">no board</label>
+            </div>
+          </div>
+
           <div id="record-map" class="map-container" style="margin-bottom:1rem;"></div>
           <button class="btn-stop" onclick="stopRecording()">⬛ Stop &amp; Save</button>
         </div>
 
       </div>
-
-
 
       <!-- LOG RIDE PAGE -->
       <div id="page-log" class="page">
@@ -1182,9 +1410,7 @@ textarea { resize: vertical; }
           <div id="model-row">
             <label>Model</label>
             <select id="log-board-model">
-              <option value="GT">GT</option>
-              <option value="Pint">Pint</option>
-              <option value="XR">XR</option>
+              <option value="GTS-XL">GTS XL</option><option value="GTS">GTS</option><option value="GT">GT</option><option value="XR-C">XR-C</option><option value="XR">XR</option><option value="Pint S">Pint S</option><option value="Pint X">Pint X</option><option value="Pint">Pint</option>
             </select>
           </div>
 
@@ -1261,15 +1487,9 @@ textarea { resize: vertical; }
 
   </div>
 
-<!-- Save modal removed - using page-save overlay instead -->
-
   <div id="toast" class="toast"></div>
 
-  
-  
-
-
-  <!-- SAVE RIDE OVERLAY - direct child of body, outside all overflow:hidden containers -->
+  <!-- SAVE RIDE OVERLAY -->
   <div id="page-save" style="display:none;position:fixed;inset:0;z-index:99999;background:#110900;overflow-y:auto;-webkit-overflow-scrolling:touch;">
     <div style="padding:1.5rem 1.25rem;max-width:500px;margin:0 auto;">
       <h1 style="font-family:'Space Mono',monospace;font-size:1.5rem;font-weight:700;color:#fff1e6;margin-bottom:1.25rem;">Save Ride</h1>
