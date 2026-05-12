@@ -335,8 +335,10 @@
     }
 
     function openSaveModal() {
-      // Fully remove map on Android to prevent bleed-through
+      // Fully remove map and clear container to prevent Android bleed-through
       if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); recordMap = null; }
+      const mapEl = document.getElementById('record-map');
+      if (mapEl) { mapEl.style.display = 'none'; mapEl.innerHTML = ''; }
       document.getElementById('save-title').value = `${selectedBoard.type === 'onewheel' ? 'Onewheel' : 'EUC'} ride`;
       document.getElementById('save-notes').value = '';
       document.getElementById('save-public').checked = false;
@@ -382,6 +384,8 @@
     }
 
     function resetRecordPage() {
+      const mapEl = document.getElementById('record-map');
+      if (mapEl) { mapEl.style.display = 'block'; mapEl.innerHTML = ''; }
       document.getElementById('pre-ride').style.display = 'block';
       document.getElementById('active-ride').style.display = 'none';
       document.querySelectorAll('.board-card').forEach(c => c.classList.remove('selected'));
