@@ -335,9 +335,8 @@
     }
 
     function openSaveModal() {
-      // Hide map so it doesn't bleed through on Android
-      const recMap = document.getElementById('record-map');
-      if (recMap) recMap.style.visibility = 'hidden';
+      // Fully remove map on Android to prevent bleed-through
+      if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); recordMap = null; }
       document.getElementById('save-title').value = `${selectedBoard.type === 'onewheel' ? 'Onewheel' : 'EUC'} ride`;
       document.getElementById('save-notes').value = '';
       document.getElementById('save-public').checked = false;
@@ -349,8 +348,6 @@
     }
 
     window.confirmSave = async function() {
-      const recMap = document.getElementById('record-map');
-      if (recMap) recMap.style.visibility = 'visible';
       const title = document.getElementById('save-title').value.trim() || 'Untitled Ride';
       const notes = document.getElementById('save-notes').value.trim();
       const durationSec = Math.floor((Date.now() - startTime) / 1000);
@@ -379,8 +376,6 @@
     }
 
     window.discardRide = function() {
-      const recMap = document.getElementById('record-map');
-      if (recMap) recMap.style.visibility = 'visible';
       document.getElementById('save-modal').classList.remove('open');
       resetRecordPage();
       toast('Ride discarded');
