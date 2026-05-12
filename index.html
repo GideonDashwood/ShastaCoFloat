@@ -332,8 +332,14 @@
       routePoints = []; topSpeedMph = 0; startTime = Date.now();
       document.getElementById('pre-ride').style.display = 'none';
       document.getElementById('active-ride').style.display = 'block';
-      // No map during recording on mobile - prevents Android GPU bleed bug
-      recordPolyline = null;
+      if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); recordMap = null; }
+      const recMapEl = document.getElementById('record-map');
+      if (recMapEl) { recMapEl.innerHTML = ''; recMapEl.style.display = 'block'; }
+      recordMap = L.map('record-map', { zoomControl: false, attributionControl: false });
+      getMapTiles().addTo(recordMap);
+      recordMap.setView([0,0], 15);
+      mapInstances.push(recordMap);
+      recordPolyline = L.polyline([], { color: '#f97316', weight: 5 }).addTo(recordMap);
       timerInterval = setInterval(updateTimer, 1000);
       watchId = navigator.geolocation.watchPosition(onGpsUpdate,
         err => { document.getElementById('gps-status').textContent = 'GPS error: ' + err.message; },
@@ -349,7 +355,8 @@
       document.getElementById('live-speed').textContent = speedMph.toFixed(1);
       document.getElementById('live-topspeed').textContent = topSpeedMph.toFixed(1);
       document.getElementById('live-dist').textContent = calcDistance(routePoints).toFixed(2);
-      // Map updates disabled during recording
+      if (recordPolyline) recordPolyline.setLatLngs(routePoints.map(p => [p.lat, p.lng]));
+      if (recordMap) recordMap.setView([lat, lng], 17);
     }
 
     function estimateSpeed() {
@@ -368,7 +375,10 @@
     window.stopRecording = function() {
       if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
       clearInterval(timerInterval);
-      // Hide record page content and show save page
+      // Destroy record map completely before showing save form
+      if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); recordMap = null; }
+      const recMapEl = document.getElementById('record-map');
+      if (recMapEl) { recMapEl.innerHTML = ''; recMapEl.style.display = 'none'; }
       document.getElementById('page-record').style.display = 'none';
       showPage('save');
       document.getElementById('save-title').value = selectedBoard.type === 'onewheel' ? 'Onewheel ride' : 'EUC ride';
@@ -1146,7 +1156,7 @@ textarea { resize: vertical; }
               <label>mph top</label>
             </div>
           </div>
-          <div class="gps-status" id="gps-track-status" style="text-align:center;padding:0.75rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:0.85rem;color:var(--text3);margin-bottom:1rem;">📍 GPS tracking active — map visible after save</div>
+          <div id="record-map" class="map-container" style="margin-bottom:1rem;"></div>
           <button class="btn-stop" onclick="stopRecording()">⬛ Stop &amp; Save</button>
         </div>
 
