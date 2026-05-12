@@ -878,7 +878,27 @@ textarea { resize: vertical; }
   .page { padding: 2.5rem 3rem; }
 }
 
-  </style>
+  
+/* Force GPU layer isolation to prevent Leaflet map bleed-through on Android */
+.page {
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  isolation: isolate;
+}
+#page-save {
+  position: relative;
+  z-index: 50;
+  background: var(--bg);
+  transform: translateZ(1px);
+  -webkit-transform: translateZ(1px);
+}
+/* Kill any leftover leaflet canvas */
+#record-map canvas,
+#record-map .leaflet-container {
+  display: none !important;
+}
+
+</style>
 </head>
 <body data-theme="dark">
 
