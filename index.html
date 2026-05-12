@@ -158,6 +158,7 @@
       document.getElementById(`page-${page}`).classList.add('active');
       document.querySelectorAll(`[data-page="${page}"]`).forEach(b => b.classList.add('active'));
       if (page === 'profile') loadProfileStats();
+      if (page === 'rides') loadRides();
     }
 
     // ============ RIDES ============
@@ -331,7 +332,19 @@
     window.stopRecording = function() {
       if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
       clearInterval(timerInterval);
-      openSaveModal();
+      // Destroy map BEFORE navigating away
+      if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); recordMap = null; }
+      const mapEl = document.getElementById('record-map');
+      if (mapEl) { mapEl.innerHTML = ''; mapEl.style.display = 'none'; }
+      // Navigate to save page (completely different page, no map anywhere)
+      showPage('save');
+      document.getElementById('save-title').value = selectedBoard.type === 'onewheel' ? 'Onewheel ride' : 'EUC ride';
+      document.getElementById('save-notes').value = '';
+      document.getElementById('save-public').checked = false;
+      document.getElementById('save-public-text').textContent = 'Private';
+      document.getElementById('save-public').onchange = function() {
+        document.getElementById('save-public-text').textContent = this.checked ? 'Public (shareable)' : 'Private';
+      };
     }
 
     function openSaveModal() {
@@ -384,6 +397,8 @@
     window.discardRide = function() {
       document.getElementById('save-modal').classList.remove('open');
       document.getElementById('save-page').style.display = 'none';
+      showPage('record');
+      resetRecordPage();
       resetRecordPage();
       toast('Ride discarded');
     }
@@ -1075,20 +1090,23 @@ textarea { resize: vertical; }
           <button class="btn-stop" onclick="stopRecording()">⬛ Stop &amp; Save</button>
         </div>
 
-        <!-- Save Ride Page (replaces modal on mobile to avoid map bleed) -->
-        <div id="save-page" style="display:none; padding: 1rem;">
-          <h2 style="font-family:var(--font-mono);font-size:1.3rem;margin-bottom:1.25rem;color:var(--text)">Save Ride</h2>
-          <label style="display:block;font-size:0.78rem;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Title</label>
-          <input type="text" id="save-title" placeholder="Give this ride a name" style="width:100%;padding:0.75rem 1rem;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.95rem;margin-bottom:0.75rem;outline:none;" />
-          <label style="display:block;font-size:0.78rem;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Notes</label>
-          <textarea id="save-notes" placeholder="Anything memorable?" rows="3" style="width:100%;padding:0.75rem 1rem;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.95rem;margin-bottom:0.75rem;outline:none;resize:vertical;"></textarea>
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:1.25rem;">
+      </div>
+
+      <!-- SAVE RIDE PAGE - standalone page, no map anywhere near it -->
+      <div id="page-save" class="page">
+        <div class="page-header"><h1>Save Ride</h1></div>
+        <div class="form-card">
+          <label>Title</label>
+          <input type="text" id="save-title" placeholder="Give this ride a name" />
+          <label>Notes</label>
+          <textarea id="save-notes" placeholder="Anything memorable?" rows="4"></textarea>
+          <div class="toggle-row" style="margin-top:0.5rem;">
             <input type="checkbox" id="save-public" class="toggle" />
             <label for="save-public" class="toggle-label"></label>
-            <span id="save-public-text" style="font-size:0.9rem;color:var(--text2)">Private</span>
+            <span id="save-public-text">Private</span>
           </div>
-          <button onclick="confirmSave()" style="width:100%;padding:0.85rem;background:var(--accent);color:#1a0800;border:none;border-radius:var(--radius-sm);font-size:1rem;font-weight:600;cursor:pointer;margin-bottom:0.75rem;">Save Ride</button>
-          <button onclick="discardRide()" style="width:100%;padding:0.75rem;background:transparent;color:var(--text2);border:1px solid var(--border2);border-radius:var(--radius-sm);font-size:0.95rem;cursor:pointer;">Discard</button>
+          <button class="btn-primary" onclick="confirmSave()">Save Ride</button>
+          <button class="btn-secondary" onclick="discardRide()">Discard</button>
         </div>
       </div>
 
