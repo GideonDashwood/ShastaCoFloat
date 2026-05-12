@@ -1137,21 +1137,32 @@ textarea { resize: vertical; }
 
       </div>
 
-      <!-- SAVE RIDE PAGE - standalone page, no map anywhere near it -->
-      <div id="page-save" class="page" style="position:fixed!important;inset:0;z-index:9000;background:var(--bg);overflow-y:auto;padding:1.5rem 1.25rem;">
-        <div class="page-header"><h1>Save Ride</h1></div>
-        <div class="form-card">
-          <label>Title</label>
-          <input type="text" id="save-title" placeholder="Give this ride a name" />
-          <label>Notes</label>
-          <textarea id="save-notes" placeholder="Anything memorable?" rows="4"></textarea>
-          <div class="toggle-row" style="margin-top:0.5rem;">
-            <input type="checkbox" id="save-public" class="toggle" />
-            <label for="save-public" class="toggle-label"></label>
-            <span id="save-public-text">Private</span>
+      <!-- SAVE RIDE PAGE -->
+      <div id="page-save" class="page">
+        <div style="position:fixed;inset:0;background:#110900;z-index:8999;"></div>
+        <div style="position:relative;z-index:9000;padding:1.5rem 1.25rem;">
+          <h1 style="font-family:var(--font-mono);font-size:1.5rem;font-weight:700;color:#fff1e6;margin-bottom:1.25rem;">Save Ride</h1>
+          <div style="background:#261500;border:1px solid rgba(249,115,22,0.2);border-radius:12px;padding:1.5rem;">
+            <label style="display:block;font-size:0.78rem;font-weight:600;color:#8a5a35;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Title</label>
+            <input type="text" id="save-title" placeholder="Give this ride a name"
+              style="width:100%;padding:0.75rem 1rem;background:#1a0f00;border:1px solid rgba(249,115,22,0.2);border-radius:8px;color:#fff1e6;font-size:0.95rem;margin-bottom:0.75rem;outline:none;-webkit-appearance:none;" />
+            <label style="display:block;font-size:0.78rem;font-weight:600;color:#8a5a35;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Notes</label>
+            <textarea id="save-notes" placeholder="Anything memorable?" rows="4"
+              style="width:100%;padding:0.75rem 1rem;background:#1a0f00;border:1px solid rgba(249,115,22,0.2);border-radius:8px;color:#fff1e6;font-size:0.95rem;margin-bottom:0.75rem;outline:none;resize:none;-webkit-appearance:none;display:block;"></textarea>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:1.25rem;">
+              <input type="checkbox" id="save-public" class="toggle" />
+              <label for="save-public" class="toggle-label"></label>
+              <span id="save-public-text" style="font-size:0.9rem;color:#d4956a;">Private</span>
+            </div>
+            <button onclick="confirmSave()"
+              style="width:100%;padding:0.85rem;background:#f97316;color:#1a0800;border:none;border-radius:8px;font-size:1rem;font-weight:600;cursor:pointer;margin-bottom:0.75rem;-webkit-appearance:none;">
+              Save Ride
+            </button>
+            <button onclick="discardRide()"
+              style="width:100%;padding:0.75rem;background:transparent;color:#d4956a;border:1px solid rgba(249,115,22,0.3);border-radius:8px;font-size:0.95rem;cursor:pointer;-webkit-appearance:none;">
+              Discard
+            </button>
           </div>
-          <button class="btn-primary" onclick="confirmSave()">Save Ride</button>
-          <button class="btn-secondary" onclick="discardRide()">Discard</button>
         </div>
       </div>
 
