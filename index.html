@@ -58,6 +58,7 @@
     let boardBattery = null;
     let boardTempF = null;
     let boardDutyCycle = null;
+    let blePollers = [];
 
     // Elevation state
     let elevGainM = 0;
@@ -65,11 +66,15 @@
     let lastAltM = null;
 
     // Onewheel BLE service + characteristic UUIDs
-    const OW_SERVICE   = 'e659f300-ea98-11e3-ac10-0800200c9a66';
-    const OW_CHAR_RPM  = 'e659f302-ea98-11e3-ac10-0800200c9a66';
-    const OW_CHAR_BATT = 'e659f303-ea98-11e3-ac10-0800200c9a66';
-    const OW_CHAR_DUTY = 'e659f30d-ea98-11e3-ac10-0800200c9a66';
-    const OW_CHAR_TEMP = 'e659f310-ea98-11e3-ac10-0800200c9a66';
+    const OW_SERVICE        = 'e659f300-ea98-11e3-ac10-0800200c9a66';
+    const OW_CHAR_RPM       = 'e659f302-ea98-11e3-ac10-0800200c9a66';
+    const OW_CHAR_BATT      = 'e659f303-ea98-11e3-ac10-0800200c9a66';
+    const OW_CHAR_DUTY      = 'e659f30d-ea98-11e3-ac10-0800200c9a66';
+    const OW_CHAR_TEMP      = 'e659f310-ea98-11e3-ac10-0800200c9a66';
+    // GT / GTS auth
+    const OW_CHAR_CHALLENGE = 'e659f311-ea98-11e3-ac10-0800200c9a66';
+    const OW_CHAR_UNLOCK    = 'e659f312-ea98-11e3-ac10-0800200c9a66';
+    const OW_GT_MODELS      = new Set(['GT', 'GTS', 'GTS-XL']);
 
     // Tire circumference in inches per model for RPM → speed
     const OW_WHEEL_CIRC = {
@@ -370,6 +375,11 @@
         bleServer = await bleDevice.gatt.connect();
         const service = await bleServer.getPrimaryService(OW_SERVICE);
 
+        // GT/GTS boards lock telemetry behind a BLE auth handshake
+        if (OW_GT_MODELS.has(selectedBoard.model)) {
+          await tryGTUnlock(service);
+        }
+
         await subscribeChar(service, OW_CHAR_RPM, onRpmData);
         await subscribeChar(service, OW_CHAR_BATT, onBattData);
         await subscribeChar(service, OW_CHAR_DUTY, onDutyData);
@@ -385,13 +395,73 @@
       }
     }
 
+    async function tryGTUnlock(service) {
+      try {
+        const challengeChar = await service.getCharacteristic(OW_CHAR_CHALLENGE);
+        const challenge = await challengeChar.readValue();
+        const challengeBytes = Array.from(new Uint8Array(challenge.buffer));
+        console.log('[BLE] GT challenge:', challengeBytes);
+
+        const unlockChar = await service.getCharacteristic(OW_CHAR_UNLOCK);
+        // CRX unlock token — community-documented approach for GT firmware
+        const token = new Uint8Array(20);
+        token[0] = 0x43; token[1] = 0x52; token[2] = 0x58; // "CRX"
+        await unlockChar.writeValue(token);
+        console.log('[BLE] GT unlock sent');
+        // Give the board a moment to process before reading telemetry
+        await new Promise(r => setTimeout(r, 400));
+      } catch(e) {
+        console.log('[BLE] GT unlock error:', e.message);
+      }
+    }
+
     async function subscribeChar(service, uuid, handler) {
       try {
         const char = await service.getCharacteristic(uuid);
-        await char.startNotifications();
-        char.addEventListener('characteristicvaluechanged', handler);
+        const props = char.properties;
+        console.log(`[BLE] ${uuid} props:`, { notify: props.notify, read: props.read });
+
+        // Subscribe to notifications for live updates
+        if (props.notify || props.indicate) {
+          try {
+            await char.startNotifications();
+            char.addEventListener('characteristicvaluechanged', handler);
+            console.log(`[BLE] ${uuid} notifications on`);
+          } catch(e) {
+            console.log(`[BLE] ${uuid} notify failed:`, e.message);
+          }
+        }
+
+        // Always do an immediate read to show current value — notify-only
+        // characteristics only fire when the value changes, so battery at a
+        // steady 75% would never arrive otherwise.
+        if (props.read) {
+          try {
+            const val = await char.readValue();
+            console.log(`[BLE] ${uuid} initial read:`, Array.from(new Uint8Array(val.buffer)));
+            handler({ target: { value: val } });
+          } catch(e) {
+            console.log(`[BLE] ${uuid} initial read failed:`, e.message);
+          }
+
+          // Poll every 3s only if no notify support
+          if (!props.notify && !props.indicate) {
+            console.log(`[BLE] ${uuid} starting 3s poll`);
+            const poll = async () => {
+              if (!bleConnected) return;
+              try {
+                const val = await char.readValue();
+                handler({ target: { value: val } });
+              } catch(e) {}
+              const id = setTimeout(poll, 3000);
+              blePollers.push(id);
+            };
+            const id = setTimeout(poll, 3000);
+            blePollers.push(id);
+          }
+        }
       } catch(e) {
-        // characteristic may not be available on all firmware versions
+        console.log(`[BLE] ${uuid} not found:`, e.message);
       }
     }
 
@@ -406,27 +476,40 @@
     }
 
     function onBattData(e) {
-      // Battery is typically in the second byte (index 1)
       const raw = e.target.value;
+      console.log('[BLE] battery raw bytes:', Array.from(new Uint8Array(raw.buffer)));
       boardBattery = raw.byteLength > 1 ? raw.getUint8(1) : raw.getUint8(0);
+      console.log('[BLE] battery parsed:', boardBattery);
       document.getElementById('live-battery').textContent = boardBattery + '%';
     }
 
     function onDutyData(e) {
-      const raw = e.target.value.getInt16(0, false);
-      boardDutyCycle = Math.abs(raw / 327.67);
+      const raw = e.target.value;
+      console.log('[BLE] duty raw bytes:', Array.from(new Uint8Array(raw.buffer)));
+      const val = raw.getInt16(0, false);
+      boardDutyCycle = Math.abs(val / 327.67);
+      console.log('[BLE] duty parsed:', boardDutyCycle);
       document.getElementById('live-duty').textContent = boardDutyCycle.toFixed(0) + '%';
     }
 
     function onTempData(e) {
-      const tempC = e.target.value.getInt16(0, false) / 10;
+      const raw = e.target.value;
+      console.log('[BLE] temp raw bytes:', Array.from(new Uint8Array(raw.buffer)));
+      const tempC = raw.getInt16(0, false) / 10;
       boardTempF = tempC * 9 / 5 + 32;
+      console.log('[BLE] temp parsed:', boardTempF, '°F');
       document.getElementById('live-temp').textContent = boardTempF.toFixed(0) + '°';
+    }
+
+    function clearBlePollers() {
+      blePollers.forEach(clearTimeout);
+      blePollers = [];
     }
 
     function onBleDisconnected() {
       bleConnected = false;
       boardSpeedMph = null;
+      clearBlePollers();
       setBleStatus('idle');
       toast('Board disconnected');
     }
@@ -435,6 +518,7 @@
       if (bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
       bleConnected = false;
       boardSpeedMph = null;
+      clearBlePollers();
       setBleStatus('idle');
     }
 
