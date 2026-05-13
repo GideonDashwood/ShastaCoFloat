@@ -592,7 +592,10 @@
 
     function onBattData(e) {
       const raw = e.target.value;
-      boardBattery = raw.byteLength > 1 ? raw.getUint8(1) : raw.getUint8(0);
+      // GT sends [0x00, pct] big-endian; Pint/XR sends [pct] or [pct, 0x00] -- always read byte 0
+      boardBattery = (OW_GT_MODELS.has(selectedBoard.model) && raw.byteLength > 1)
+        ? raw.getUint8(1)
+        : raw.getUint8(0);
       bleDiag(`batt bytes=[${Array.from(new Uint8Array(raw.buffer))}] -> ${boardBattery}%`);
       document.getElementById('live-battery').textContent = boardBattery + '%';
     }
@@ -607,6 +610,7 @@
 
     function onTempData(e) {
       const raw = e.target.value;
+      if (new Uint8Array(raw.buffer).every(b => b === 0)) return; // skip uninitialized zero read; wait for real notification
       const tempC = raw.getInt16(0, false) / 10;
       boardTempF = tempC * 9 / 5 + 32;
       bleDiag(`temp bytes=[${Array.from(new Uint8Array(raw.buffer))}] -> ${boardTempF.toFixed(1)}\u00B0F`);
