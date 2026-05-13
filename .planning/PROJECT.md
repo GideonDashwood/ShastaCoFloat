@@ -25,11 +25,14 @@ A connected ride with accurate, readable telemetry — battery, duty cycle, temp
 
 ### Active
 
-- [ ] Battery percentage displays and updates correctly on Pint during live rides
-- [ ] Duty cycle displays and updates correctly on Pint during live rides
-- [ ] Temperature displays the correct value on Pint during live rides
-- [ ] No garbled/strange characters anywhere in the app (live screen, ride detail view)
-- [ ] BLE auth handled correctly per board model (Pint skips auth; GT/GTS use f3fe/f3ff handshake)
+- [ ] Battery percentage displays and updates correctly on Pint during live rides (requires physical Pint test)
+- [ ] Duty cycle displays and updates correctly on Pint during live rides (requires physical Pint test)
+- [ ] Temperature displays the correct value on Pint during live rides (requires physical Pint test)
+
+### Validated
+
+- ✓ No garbled/strange characters anywhere in the app -- all non-ASCII bytes replaced with HTML entities and JS Unicode escapes (Validated in Phase 2: Encoding Fix & Deploy)
+- ✓ BLE auth handled correctly per board model (Pint skips auth; GT/GTS use f3fe/f3ff handshake) (Validated in Phase 1: Pint BLE Telemetry Fix)
 
 ### Out of Scope
 
@@ -77,4 +80,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-12 after initialization*
+*Last updated: 2026-05-12 after Phase 2 (Encoding Fix & Deploy) completion -- Bug Fix milestone complete*
