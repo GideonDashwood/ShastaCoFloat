@@ -266,7 +266,10 @@
         const dist = (r.distanceKm || 0).toFixed(2);
         const dur = formatDuration(r.durationSeconds || 0);
         const top = (r.topSpeedKmh || 0).toFixed(1);
-        const boardLabel = r.boardType === 'onewheel' ? escHtml(`OW ${r.boardModel || ''}`.trim()) : 'EUC';
+        const boardLabel = r.boardType === 'onewheel'
+          ? escHtml(`OW ${r.boardModel || ''}`.trim())
+          : r.boardType === 'vesc' ? 'VESC'
+          : 'EUC';
         return `<div class="ride-card" onclick="openRide('${r.id}')">
           <div class="ride-card-left">
             <div class="ride-title">${escHtml(r.title || 'Untitled Ride')}</div>
@@ -311,7 +314,10 @@
         }
       }, 100);
       const date = new Date(ride.startedAt).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-      const boardLabel = ride.boardType === 'onewheel' ? escHtml(`Onewheel ${ride.boardModel || ''}`.trim()) : 'EUC';
+      const boardLabel = ride.boardType === 'onewheel'
+        ? escHtml(`Onewheel ${ride.boardModel || ''}`.trim())
+        : ride.boardType === 'vesc' ? 'VESC'
+        : 'EUC';
       const elevUp = ride.elevGainFt != null ? `+${ride.elevGainFt.toFixed(0)}ft` : '--';
       const elevDown = ride.elevLossFt != null ? `-${ride.elevLossFt.toFixed(0)}ft` : '--';
       document.getElementById('modal-content').innerHTML = `
@@ -796,6 +802,8 @@
       let battSamples = [], dutyMax = 0;
       window._battSamples = battSamples;
       window._dutyMax = dutyMax;
+      window._vescVoltageSamples = [];
+      window._tempSamples = [];
 
       document.getElementById('pre-ride').style.display = 'none';
       document.getElementById('active-ride').style.display = 'block';
@@ -818,6 +826,8 @@
         // Accumulate battery samples for avg
         if (boardBattery != null) window._battSamples.push(boardBattery);
         if (boardDutyCycle != null && boardDutyCycle > window._dutyMax) window._dutyMax = boardDutyCycle;
+        if (vescVoltage != null) window._vescVoltageSamples.push(vescVoltage);
+        if (boardTempF != null) window._tempSamples.push(boardTempF);
       }, 1000);
       watchId = navigator.geolocation.watchPosition(onGpsUpdate,
         err => { document.getElementById('gps-status').textContent = 'GPS error: ' + err.message; },
@@ -881,8 +891,10 @@
       const recMapEl = document.getElementById('record-map');
       if (recMapEl) { recMapEl.innerHTML = ''; recMapEl.style.display = 'none'; }
       document.getElementById('page-record').style.display = 'none';
+      clearBlePollers();
       showPage('save');
-      document.getElementById('save-title').value = selectedBoard.type === 'onewheel' ? 'Onewheel ride' : 'EUC ride';
+      const _titleMap = { onewheel: 'Onewheel ride', vesc: 'VESC ride', euc: 'EUC ride' };
+      document.getElementById('save-title').value = _titleMap[selectedBoard.type] || 'Ride';
       document.getElementById('save-notes').value = '';
       document.getElementById('save-public').checked = false;
       document.getElementById('save-public-text').textContent = 'Private';
@@ -915,6 +927,12 @@
           elevLossFt: parseFloat((elevLossM * 3.28084).toFixed(1)),
           avgBattery: avgBatt != null ? parseFloat(avgBatt.toFixed(1)) : null,
           maxDutyCycle: maxDuty != null ? parseFloat(maxDuty.toFixed(1)) : null,
+          vescVoltage: (window._vescVoltageSamples && window._vescVoltageSamples.length)
+            ? parseFloat((window._vescVoltageSamples.reduce((a,b) => a+b, 0) / window._vescVoltageSamples.length).toFixed(1))
+            : null,
+          avgMotorTemp: (window._tempSamples && window._tempSamples.length)
+            ? parseFloat((window._tempSamples.reduce((a,b) => a+b, 0) / window._tempSamples.length).toFixed(1))
+            : null,
           startedAt: new Date(startTime).toISOString(),
           createdAt: new Date().toISOString()
         });
@@ -948,6 +966,9 @@
       document.getElementById('gps-status').textContent = 'Select a board to begin';
       const bleRow = document.getElementById('ble-row');
       if (bleRow) { bleRow.style.display = 'none'; setBleStatus('idle'); }
+      const vescRow = document.getElementById('vesc-connect-row');
+      if (vescRow) vescRow.style.display = 'none';
+      vescVoltage = null;
       selectedBoard = { type: null, model: null };
       if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); recordMap = null; }
     }
