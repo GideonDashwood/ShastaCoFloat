@@ -1,26 +1,26 @@
 # Project State
 
 ## Current Status
-- Phase: 1
-- Phase name: Pint BLE Telemetry Fix
-- Status: Verifying
-- Plans: 1/1 complete (01-ble-auth-guard)
+- Phase: 2
+- Phase name: Encoding Fix & Deploy
+- Status: Ready to execute
+- Plans: 1 (02-01-encoding-sweep)
 
 ## Project Reference
 See: .planning/PROJECT.md (updated 2026-05-12)
 
 **Core value**: A connected ride with accurate, readable telemetry
-**Current focus**: Phase 1 — Pint BLE Telemetry Fix
+**Current focus**: Phase 2 — Encoding Fix & Deploy
 
 ## Current Position
 
 | Field | Value |
 |-------|-------|
 | Milestone | Bug Fix |
-| Phase | 1 of 2 |
-| Plan | 01-ble-auth-guard (1 of 1) |
-| Status | Verifying |
-| Progress | [----------] 100% |
+| Phase | 2 of 2 |
+| Plan | 02-01 (1 of 1) |
+| Status | Ready to execute |
+| Progress | [-----     ] 0% |
 
 ## Performance Metrics
 
@@ -35,7 +35,7 @@ See: .planning/PROJECT.md (updated 2026-05-12)
 ### Key Decisions
 - Auth guard uses `OW_GT_MODELS` set (GT/GTS/GTS-XL only) — Pint/XR/XR-C skip auth
 - Encoding fix targets all non-ASCII bytes: HTML entities in markup, Unicode escapes in script blocks
-- SW cache version must be bumped on every deploy (currently `ridelogger-v20` → next: `ridelogger-v21`)
+- SW cache version must be bumped on every deploy (Phase 1 used ridelogger-v21 → Phase 2 targets ridelogger-v22)
 
 ### Known Risks
 - Physical Pint board required for end-to-end BLE validation; no emulator
@@ -48,4 +48,4 @@ None
 ## Session Continuity
 
 Last updated: 2026-05-12
-Next action: Verify Phase 1 goal achievement; then plan/execute Phase 2
+Next action: Execute Phase 2 via `/gsd-execute-phase 2`
