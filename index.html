@@ -393,13 +393,17 @@
         // Discover all characteristics first so we can see what the board exposes
         await discoverAllChars(bleService);
 
-        // Only GT/GTS/GTS-XL use the f3fe/f3ff auth handshake; Pint/XR skip it
+        // GT/GTS/GTS-XL need full MD5 auth; Pint/XR need only an f311 write-back to
+        // start streaming telemetry (battery, duty, temp) -- without it the board
+        // returns all-zero bytes and never sends change notifications.
         if (OW_GT_MODELS.has(selectedBoard.model)) {
           await tryGTUnlock(bleService);
           // Keep-alive: board re-locks if no auth for >24s; re-run every 20s
           bleKeepAlive = setInterval(async () => {
             if (bleService && bleConnected) await tryGTUnlock(bleService);
           }, 20000);
+        } else {
+          await triggerPintTelemetry(bleService);
         }
 
         await subscribeChar(bleService, OW_CHAR_RPM, onRpmData);
@@ -440,6 +444,19 @@
         bleDiag('=== end ===');
       } catch(e) {
         bleDiag('discover failed: ' + e.message);
+      }
+    }
+
+    // Pint/XR telemetry trigger: reading f311 and writing it back tells the board to
+    // begin streaming notifications on battery, duty, and temp characteristics.
+    async function triggerPintTelemetry(service) {
+      try {
+        const fwChar = await service.getCharacteristic(OW_CHAR_FW);
+        const fwValue = await fwChar.readValue();
+        await fwChar.writeValue(fwValue);
+        bleDiag('f311 write-back: Pint telemetry streaming started');
+      } catch(e) {
+        bleDiag('f311 ping: ' + e.message);
       }
     }
 
