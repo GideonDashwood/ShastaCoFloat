@@ -65,32 +65,26 @@ blocked: 0
 
 ## Gaps
 
-- truth: "BLE status indicator turns green/connected showing 'VESC Mock' after clicking Connect VESC (Mock)"
-  status: failed
-  reason: "User reported: Toast appears and Start Ride becomes enabled, but BLE status indicator does not turn green"
+- truth: "BLE status indicator turns green and button reads 'Disconnect VESC (Mock)' after connecting"
+  status: fixed
+  reason: "User reported: dot did not turn green and button text did not change"
+  fix: "vesc-dot and vesc-btn updated directly in connectVESCMock() — commits b7d17fa, d6d898a"
+  confirmed: true
   severity: major
   test: 3
-  artifacts: []
-  missing: []
 
 - truth: "Clicking Connect VESC (Mock) while already connected disconnects — toast 'VESC mock disconnected', status returns to idle"
-  status: failed
-  reason: "User reported: Selecting Connect VESC (Mock) again only shows 'connected' toast again — no disconnect occurs"
+  status: fixed
+  reason: "User reported: second tap showed 'connected' toast again — toggle not deployed"
+  fix: "WR-05 disconnect toggle (commit 098f081) pushed to remote — now live on Vercel preview"
+  confirmed: true
   severity: major
   test: 5
-  artifacts: []
-  missing: []
 
 - truth: "Filter by board dropdown includes a VESC option that shows only VESC rides when selected"
-  status: failed
-  reason: "User reported: VESC option does not appear in the filter dropdown"
+  status: fixed
+  reason: "User reported: VESC option did not appear — WR-03 fix not deployed"
+  fix: "WR-03 filter option (commit 344e57d) pushed to remote — now live on Vercel preview"
+  confirmed: true
   severity: major
   test: 9
-  artifacts: []
-  missing: []
-  status: failed
-  reason: "User reported: Selecting Connect VESC (Mock) again only shows 'connected' toast again — no disconnect occurs"
-  severity: major
-  test: 5
-  artifacts: []
-  missing: []
