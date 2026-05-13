@@ -389,8 +389,8 @@
         // Discover all characteristics first so we can see what the board exposes
         await discoverAllChars(bleService);
 
-        // All Onewheel models use the f3fe/f3ff auth handshake
-        await tryGTUnlock(bleService);
+        // Only GT/GTS/GTS-XL use the f3fe/f3ff auth handshake; Pint/XR skip it
+        if (OW_GT_MODELS.has(selectedBoard.model)) await tryGTUnlock(bleService);
 
         await subscribeChar(bleService, OW_CHAR_RPM, onRpmData);
         await subscribeChar(bleService, OW_CHAR_BATT, onBattData);
@@ -500,7 +500,7 @@
           await readAndFire(OW_CHAR_BATT, onBattData);
           await readAndFire(OW_CHAR_DUTY, onDutyData);
           await readAndFire(OW_CHAR_TEMP, onTempData);
-        } catch(e) {}
+        } catch(e) { bleDiag('poll error: ' + e.message); }
         const id = setTimeout(poll, 5000);
         blePollers.push(id);
       };
