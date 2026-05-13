@@ -53,6 +53,7 @@
     // BLE state
     let bleDevice = null;
     let bleServer = null;
+    let bleService = null;
     let bleConnected = false;
     let boardSpeedMph = null;
     let boardBattery = null;
@@ -382,15 +383,21 @@
         });
         bleDevice.addEventListener('gattserverdisconnected', onBleDisconnected);
         bleServer = await bleDevice.gatt.connect();
-        const service = await bleServer.getPrimaryService(OW_SERVICE);
+        bleService = await bleServer.getPrimaryService(OW_SERVICE);
 
-        // Always attempt GT auth — non-GT boards simply won't have f311/f312
-        await tryGTUnlock(service);
+        // GT/GTS/GTS-XL require a BLE auth handshake; Pint/XR/XRC do not
+        if (OW_GT_MODELS.has(selectedBoard.model)) {
+          await tryGTUnlock(bleService);
+        }
 
-        await subscribeChar(service, OW_CHAR_RPM, onRpmData);
-        await subscribeChar(service, OW_CHAR_BATT, onBattData);
-        await subscribeChar(service, OW_CHAR_DUTY, onDutyData);
-        await subscribeChar(service, OW_CHAR_TEMP, onTempData);
+        await subscribeChar(bleService, OW_CHAR_RPM, onRpmData);
+        await subscribeChar(bleService, OW_CHAR_BATT, onBattData);
+        await subscribeChar(bleService, OW_CHAR_DUTY, onDutyData);
+        await subscribeChar(bleService, OW_CHAR_TEMP, onTempData);
+
+        // Pint/XR boards only push notifications when a value changes.
+        // Poll slow telemetry every 5s so battery/duty/temp always stay fresh.
+        startTelemetryPolling();
 
         bleConnected = true;
         setBleStatus('connected', bleDevice.name || 'Onewheel');
@@ -432,6 +439,29 @@
       } catch(e) {
         bleDiag('GT unlock skipped: ' + e.message);
       }
+    }
+
+    function startTelemetryPolling() {
+      // Pint/XR boards only send notifications on value change, so battery
+      // sitting at a stable level never arrives. Poll every 5s as a backup.
+      const poll = async () => {
+        if (!bleConnected || !bleService) return;
+        try {
+          const readAndFire = async (uuid, handler) => {
+            const char = await bleService.getCharacteristic(uuid);
+            const val = await char.readValue();
+            handler({ target: { value: val } });
+          };
+          await readAndFire(OW_CHAR_BATT, onBattData);
+          await readAndFire(OW_CHAR_DUTY, onDutyData);
+          await readAndFire(OW_CHAR_TEMP, onTempData);
+        } catch(e) {}
+        const id = setTimeout(poll, 5000);
+        blePollers.push(id);
+      };
+      // First poll after 1.5s — gives the board a moment to settle after connect
+      const id = setTimeout(poll, 1500);
+      blePollers.push(id);
     }
 
     async function subscribeChar(service, uuid, handler) {
@@ -525,6 +555,7 @@
 
     function onBleDisconnected() {
       bleConnected = false;
+      bleService = null;
       boardSpeedMph = null;
       clearBlePollers();
       clearBleDiag();
@@ -535,6 +566,7 @@
     function disconnectBLE() {
       if (bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
       bleConnected = false;
+      bleService = null;
       boardSpeedMph = null;
       clearBlePollers();
       clearBleDiag();
@@ -1293,6 +1325,7 @@ textarea { resize: vertical; }
           <circle cx="20" cy="20" r="8" fill="var(--accent)"/>
         </svg>
         <span class="app-title">RideLogger</span>
+        <span style="font-size:0.65rem;color:var(--text3);font-family:var(--font-mono);">v18</span>
       </div>
       <div class="topbar-right">
         <button class="icon-btn" onclick="toggleTheme()" title="Toggle theme">
@@ -1624,6 +1657,13 @@ textarea { resize: vertical; }
   <script>
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(e => console.log("SW error:", e));
+      navigator.serviceWorker.addEventListener('message', e => {
+        if (e.data?.type === 'SW_UPDATED') {
+          // Reload to pick up new HTML — skip if a ride is in progress
+          if (!watchId) window.location.reload();
+          else toast('App update ready — will apply after ride ends');
+        }
+      });
     }
   </script>
 </body>
