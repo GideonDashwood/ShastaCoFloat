@@ -747,6 +747,8 @@
         bleConnected = false;
         vescVoltage = null;
         setBleStatus('idle');
+        const vd = document.getElementById('vesc-dot');
+        if (vd) vd.className = 'ble-dot';
         toast('VESC mock disconnected');
         return;
       }
@@ -766,6 +768,8 @@
       // All multi-byte values are big-endian.
       bleConnected = true;
       setBleStatus('connected', 'VESC Mock');
+      const vd = document.getElementById('vesc-dot');
+      if (vd) vd.className = 'ble-dot ble-dot-on';
       toast('VESC mock connected');
       let t = 0;
       vescMockInterval = setInterval(() => {
