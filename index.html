@@ -384,10 +384,8 @@
         bleServer = await bleDevice.gatt.connect();
         const service = await bleServer.getPrimaryService(OW_SERVICE);
 
-        // GT/GTS boards lock telemetry behind a BLE auth handshake
-        if (OW_GT_MODELS.has(selectedBoard.model)) {
-          await tryGTUnlock(service);
-        }
+        // Always attempt GT auth — non-GT boards simply won't have f311/f312
+        await tryGTUnlock(service);
 
         await subscribeChar(service, OW_CHAR_RPM, onRpmData);
         await subscribeChar(service, OW_CHAR_BATT, onBattData);
@@ -409,16 +407,17 @@
         const challengeChar = await service.getCharacteristic(OW_CHAR_CHALLENGE);
         const challenge = await challengeChar.readValue();
         const challengeBytes = Array.from(new Uint8Array(challenge.buffer));
-        bleDiag('GT challenge: ' + JSON.stringify(challengeBytes));
+        bleDiag('GT f311 challenge: ' + JSON.stringify(challengeBytes));
 
         const unlockChar = await service.getCharacteristic(OW_CHAR_UNLOCK);
         const token = new Uint8Array(20);
         token[0] = 0x43; token[1] = 0x52; token[2] = 0x58; // "CRX"
         await unlockChar.writeValue(token);
-        bleDiag('GT unlock sent');
+        bleDiag('GT CRX token written to f312');
         await new Promise(r => setTimeout(r, 400));
       } catch(e) {
-        bleDiag('GT unlock error: ' + e.message);
+        // f311/f312 don't exist on non-GT boards — expected
+        bleDiag('GT unlock skipped: ' + e.message);
       }
     }
 
