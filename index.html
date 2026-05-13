@@ -62,6 +62,8 @@
     let boardDutyCycle = null;
     let blePollers = [];
     let bleKeepAlive = null;
+    let vescMockInterval = null;   // handle for VESC mock setInterval
+    let vescVoltage = null;        // current VESC voltage reading
 
     // Elevation state
     let elevGainM = 0;
@@ -684,6 +686,7 @@
       blePollers.forEach(clearTimeout);
       blePollers = [];
       if (bleKeepAlive) { clearInterval(bleKeepAlive); bleKeepAlive = null; }
+      if (vescMockInterval) { clearInterval(vescMockInterval); vescMockInterval = null; }
     }
 
     function clearBleDiag() {
@@ -731,6 +734,47 @@
     }
 
     // ============ RECORD ============
+    window.connectVESCMock = function() {
+      // TODO: VESC BLE -- replace this mock with real VESC protocol
+      // Real implementation: connect to Nordic UART Service (NUS)
+      //   Service UUID : 6e400001-b5a3-f393-e0a9-e50e24dcca9e
+      //   RX char (write): 6e400002-b5a3-f393-e0a9-e50e24dcca9e
+      //   TX char (notify): 6e400003-b5a3-f393-e0a9-e50e24dcca9e
+      // Send COMM_GET_VALUES request: [0x02, 0x01, 0x04, CRC_HI, CRC_LO, 0x03]
+      // Parse response (big-endian, byte offsets from payload start):
+      //   [0]      : command echo (0x04)
+      //   [1-2]    : temp_fet * 10  (Int16) -> divide by 10 for deg C
+      //   [3-4]    : temp_motor * 10 (Int16) -> divide by 10 for deg C
+      //   [21-22]  : duty_cycle * 1000 (Int16) -> divide by 10 for %
+      //   [23-26]  : rpm (Int32) -> convert to mph via wheel circumference
+      //   [27-28]  : v_in * 10 (Int16) -> divide by 10 for volts
+      // All multi-byte values are big-endian.
+      bleConnected = true;
+      setBleStatus('connected', 'VESC Mock');
+      toast('VESC mock connected');
+      let t = 0;
+      vescMockInterval = setInterval(() => {
+        t += 0.1;
+        const battery  = Math.round(60 + 30 * Math.sin(t * 0.05));
+        const duty     = Math.round(20 + 40 * Math.abs(Math.sin(t * 0.3)));
+        const tempC    = +(35 + 15 * Math.sin(t * 0.07)).toFixed(1);
+        const speedMph = +(10 + 12 * Math.abs(Math.sin(t * 0.2))).toFixed(1);
+        const voltage  = +(48 + 8 * Math.sin(t * 0.04)).toFixed(1);
+        boardBattery   = battery;
+        boardDutyCycle = duty;
+        boardTempF     = tempC * 9 / 5 + 32;
+        boardSpeedMph  = speedMph;
+        vescVoltage    = voltage;
+        if (speedMph > topSpeedMph) topSpeedMph = speedMph;
+        document.getElementById('vesc-live-battery').textContent = battery + '%';
+        document.getElementById('vesc-live-duty').textContent    = duty + '%';
+        document.getElementById('vesc-live-temp').textContent    = tempC.toFixed(0) + '°';
+        document.getElementById('live-voltage').textContent      = voltage + 'V';
+        document.getElementById('live-speed').textContent        = speedMph.toFixed(1);
+        document.getElementById('live-topspeed').textContent     = topSpeedMph.toFixed(1);
+      }, 2000);
+    }
+
     window.selectBoard = function(type, model) {
       selectedBoard = { type, model };
       document.querySelectorAll('.board-card').forEach(c => c.classList.remove('selected'));
@@ -739,6 +783,8 @@
       document.getElementById('gps-status').textContent = 'GPS ready -- tap Start Ride';
       const bleRow = document.getElementById('ble-row');
       if (bleRow) bleRow.style.display = type === 'onewheel' ? 'block' : 'none';
+      const vescRow = document.getElementById('vesc-connect-row');
+      if (vescRow) vescRow.style.display = type === 'vesc' ? 'block' : 'none';
     }
 
     window.startRecording = function() {
@@ -756,6 +802,8 @@
       // Show BLE stat row only when OW board
       document.getElementById('ble-stats-row').style.display =
         selectedBoard.type === 'onewheel' ? 'grid' : 'none';
+      document.getElementById('vesc-stats-row').style.display =
+        selectedBoard.type === 'vesc' ? 'grid' : 'none';
 
       if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); recordMap = null; }
       const recMapEl = document.getElementById('record-map');
@@ -1590,6 +1638,10 @@ textarea { resize: vertical; }
                 <div class="board-icon">&#x1F4D8;</div>
                 <div>EUC</div>
               </button>
+              <button class="board-card" onclick="selectBoard('vesc','VESC')" data-board="vesc-VESC">
+                <div class="board-icon">&#x26A1;</div>
+                <div>VESC</div>
+              </button>
             </div>
           </div>
 
@@ -1600,6 +1652,14 @@ textarea { resize: vertical; }
               Connect Onewheel
             </button>
             <div id="ble-diag" style="display:none;margin-top:8px;background:#0a0500;border:1px solid rgba(249,115,22,0.2);border-radius:8px;padding:8px 10px;font-family:monospace;font-size:0.72rem;color:#fb923c;max-height:140px;overflow-y:auto;white-space:pre-wrap;line-height:1.5;"></div>
+          </div>
+
+          <!-- VESC mock connect -- only shown when VESC is selected -->
+          <div id="vesc-connect-row" style="display:none;margin-top:0.75rem;">
+            <button class="btn-ble" id="vesc-btn" onclick="connectVESCMock()">
+              <span class="ble-dot" id="vesc-dot"></span>
+              Connect VESC (Mock)
+            </button>
           </div>
 
           <button class="btn-primary btn-start" onclick="startRecording()" id="start-btn" disabled style="margin-top:0.75rem">
@@ -1659,6 +1719,26 @@ textarea { resize: vertical; }
             <div class="live-stat-sm" style="background:transparent;border-color:transparent;">
               <span style="font-size:0.9rem;">&#x1F4E1;</span>
               <label id="ble-live-label">no board</label>
+            </div>
+          </div>
+
+          <!-- VESC telemetry row -- only shown for VESC -->
+          <div class="live-stats-secondary" id="vesc-stats-row" style="display:none;margin-top:0;">
+            <div class="live-stat-sm">
+              <span id="vesc-live-battery">--%</span>
+              <label>battery</label>
+            </div>
+            <div class="live-stat-sm">
+              <span id="vesc-live-duty">--%</span>
+              <label>duty cycle</label>
+            </div>
+            <div class="live-stat-sm">
+              <span id="vesc-live-temp">--&#x00B0;</span>
+              <label>motor temp</label>
+            </div>
+            <div class="live-stat-sm">
+              <span id="live-voltage">--V</span>
+              <label>voltage</label>
             </div>
           </div>
 
