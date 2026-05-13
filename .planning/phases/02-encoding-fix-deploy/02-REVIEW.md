@@ -11,7 +11,13 @@ findings:
   warning: 2
   info: 2
   total: 5
-status: issues_found
+status: fixed
+fixed:
+  - CR-01: window._watchId mirrors watchId; non-module SW handler reads window._watchId (commit 470da4d)
+  - WR-01: UTF-8 BOM stripped from index.html and sw.js (commit 68bc4c0)
+  - WR-02: boardModel wrapped with escHtml() at all three innerHTML injection sites (commit 40a150c)
+fixed_at: 2026-05-12T00:00:00Z
+sw_version_after_fix: ridelogger-v23
 ---
 
 # Phase 02: Code Review Report
