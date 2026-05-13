@@ -969,6 +969,7 @@
       if (bleRow) { bleRow.style.display = 'none'; setBleStatus('idle'); }
       const vescRow = document.getElementById('vesc-connect-row');
       if (vescRow) vescRow.style.display = 'none';
+      clearBlePollers();          // clears vescMockInterval on discard
       vescVoltage = null;
       selectedBoard = { type: null, model: null };
       if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); recordMap = null; }
