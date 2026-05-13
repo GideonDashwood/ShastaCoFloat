@@ -1030,7 +1030,9 @@
         document.getElementById('prof-time').textContent = (data.reduce((s,r) => s+(r.durationSeconds||0), 0) / 3600).toFixed(1);
         const breakdown = {};
         data.forEach(r => {
-          const key = r.boardType === 'onewheel' ? `Onewheel ${r.boardModel||''}`.trim() : 'EUC';
+          const key = r.boardType === 'onewheel' ? `Onewheel ${r.boardModel||''}`.trim()
+            : r.boardType === 'vesc' ? 'VESC'
+            : 'EUC';
           breakdown[key] = (breakdown[key]||0) + 1;
         });
         const el = document.getElementById('board-breakdown');
