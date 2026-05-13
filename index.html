@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -72,12 +72,13 @@
     const OW_CHAR_BATT      = 'e659f303-ea98-11e3-ac10-0800200c9a66';
     const OW_CHAR_DUTY      = 'e659f30d-ea98-11e3-ac10-0800200c9a66';
     const OW_CHAR_TEMP      = 'e659f310-ea98-11e3-ac10-0800200c9a66';
-    // GT / GTS auth
-    const OW_CHAR_CHALLENGE = 'e659f311-ea98-11e3-ac10-0800200c9a66';
-    const OW_CHAR_UNLOCK    = 'e659f312-ea98-11e3-ac10-0800200c9a66';
+    // Auth characteristics (all Onewheel models)
+    const OW_CHAR_AUTH_IN   = 'e659f3fe-ea98-11e3-ac10-0800200c9a66'; // notify-only: board sends challenge
+    const OW_CHAR_AUTH_OUT  = 'e659f3ff-ea98-11e3-ac10-0800200c9a66'; // write-only: we send response
+    const OW_CHAR_SERIAL    = 'e659f318-ea98-11e3-ac10-0800200c9a66'; // board identifier used in response
     const OW_GT_MODELS      = new Set(['GT', 'GTS', 'GTS-XL']);
 
-    // Tire circumference in inches per model for RPM → speed
+    // Tire circumference in inches per model for RPM â†’ speed
     const OW_WHEEL_CIRC = {
       'GTS-XL': 36.5, 'GTS': 36.5, 'GT': 36.5,
       'XR-C': 36.1, 'XR': 36.1,
@@ -101,7 +102,7 @@
 
     function updateThemeIcon(theme) {
       const el = document.getElementById('theme-icon');
-      if (el) el.textContent = theme === 'dark' ? '☀️' : '🌙';
+      if (el) el.textContent = theme === 'dark' ? 'â˜€ï¸' : 'ðŸŒ™';
     }
 
     function getMapTiles() {
@@ -263,7 +264,7 @@
         return `<div class="ride-card" onclick="openRide('${r.id}')">
           <div class="ride-card-left">
             <div class="ride-title">${escHtml(r.title || 'Untitled Ride')}</div>
-            <div class="ride-meta">${date} · ${time}</div>
+            <div class="ride-meta">${date} Â· ${time}</div>
             <div class="ride-stats">
               <div class="ride-stat-item"><span class="ride-stat-val">${dist}</span><span class="ride-stat-lbl">mi</span></div>
               <div class="ride-stat-item"><span class="ride-stat-val">${dur}</span><span class="ride-stat-lbl">time</span></div>
@@ -310,7 +311,7 @@
       document.getElementById('modal-content').innerHTML = `
         <div class="modal-content-section">
           <h2 style="font-family:var(--font-mono);font-size:1.1rem;margin-bottom:4px">${escHtml(ride.title||'Untitled Ride')}</h2>
-          <p style="font-size:0.82rem;color:var(--text3);margin-bottom:0.75rem">${date} · <span class="board-badge">${boardLabel}</span></p>
+          <p style="font-size:0.82rem;color:var(--text3);margin-bottom:0.75rem">${date} Â· <span class="board-badge">${boardLabel}</span></p>
           <div class="modal-stat-row">
             <div class="modal-stat"><span>${(ride.distanceKm||0).toFixed(2)}</span><label>mi</label></div>
             <div class="modal-stat"><span>${formatDuration(ride.durationSeconds||0)}</span><label>duration</label></div>
@@ -388,10 +389,8 @@
         // Discover all characteristics first so we can see what the board exposes
         await discoverAllChars(bleService);
 
-        // GT/GTS/GTS-XL require a BLE auth handshake; Pint/XR/XRC do not
-        if (OW_GT_MODELS.has(selectedBoard.model)) {
-          await tryGTUnlock(bleService);
-        }
+        // All Onewheel models use the f3fe/f3ff auth handshake
+        await tryGTUnlock(bleService);
 
         await subscribeChar(bleService, OW_CHAR_RPM, onRpmData);
         await subscribeChar(bleService, OW_CHAR_BATT, onBattData);
@@ -436,33 +435,54 @@
 
     async function tryGTUnlock(service) {
       try {
-        const challengeChar = await service.getCharacteristic(OW_CHAR_CHALLENGE);
-        const challenge = await challengeChar.readValue();
-        const cb = Array.from(new Uint8Array(challenge.buffer));
-        bleDiag('GT f311 challenge: ' + JSON.stringify(cb));
+        // Subscribe to f3fe â€” board sends challenge as a notification
+        const authIn = await service.getCharacteristic(OW_CHAR_AUTH_IN);
+        await authIn.startNotifications();
+        authIn.addEventListener('characteristicvaluechanged', async (e) => {
+          const challenge = Array.from(new Uint8Array(e.target.value.buffer));
+          bleDiag('f3fe challenge notify: ' + JSON.stringify(challenge));
+          await sendAuthResponse(service, challenge);
+        });
+        bleDiag('f3fe: subscribed, waiting for challenge...');
 
-        const unlockChar = await service.getCharacteristic(OW_CHAR_UNLOCK);
+        // Also read f318 (board serial/identifier) â€” used in some response computations
+        try {
+          const serialChar = await service.getCharacteristic(OW_CHAR_SERIAL);
+          const serialVal = await serialChar.readValue();
+          const serial = Array.from(new Uint8Array(serialVal.buffer));
+          bleDiag('f318 serial: ' + JSON.stringify(serial));
+        } catch(e) {}
 
-        // Try response lengths in order — board will reject wrong sizes
+        // Give the board 800ms to send the f3fe challenge notification
+        await new Promise(r => setTimeout(r, 800));
+      } catch(e) {
+        bleDiag('Auth setup error: ' + e.message);
+      }
+    }
+
+    async function sendAuthResponse(service, challenge) {
+      try {
+        const authOut = await service.getCharacteristic(OW_CHAR_AUTH_OUT);
+        // Try response candidates in order â€” first accepted write wins
         const candidates = [
-          { label: '3b CRX',    bytes: new Uint8Array([0x43, 0x52, 0x58]) },
-          { label: '2b XOR D8', bytes: new Uint8Array([cb[0] ^ 0xD8, cb[1] ^ 0xD8]) },
-          { label: '2b XOR 3C', bytes: new Uint8Array([cb[0] ^ 0x3C, cb[1] ^ 0x3C]) },
-          { label: '2b echo',   bytes: new Uint8Array(cb) },
+          { label: '2b XOR D8', bytes: new Uint8Array([challenge[0]^0xD8, challenge[1]^0xD8]) },
+          { label: '2b XOR FF', bytes: new Uint8Array([challenge[0]^0xFF, challenge[1]^0xFF]) },
+          { label: '2b XOR 05', bytes: new Uint8Array([challenge[0]^0x05, challenge[1]^0x05]) },
+          { label: '2b echo',   bytes: new Uint8Array(challenge.slice(0,2)) },
+          { label: '3b CRX',   bytes: new Uint8Array([0x43, 0x52, 0x58]) },
         ];
-
         for (const { label, bytes } of candidates) {
           try {
-            await unlockChar.writeValue(bytes);
-            bleDiag(`GT unlock OK: ${label} [${Array.from(bytes)}]`);
+            await authOut.writeValue(bytes);
+            bleDiag('Auth OK f3ff: ' + label + ' â†’ [' + Array.from(bytes) + ']');
             await new Promise(r => setTimeout(r, 400));
             return;
           } catch(e) {
-            bleDiag(`GT ${label} failed: ${e.message}`);
+            bleDiag('f3ff ' + label + ' failed: ' + e.message);
           }
         }
       } catch(e) {
-        bleDiag('GT unlock skipped: ' + e.message);
+        bleDiag('sendAuthResponse error: ' + e.message);
       }
     }
 
@@ -484,7 +504,7 @@
         const id = setTimeout(poll, 5000);
         blePollers.push(id);
       };
-      // First poll after 1.5s — gives the board a moment to settle after connect
+      // First poll after 1.5s â€” gives the board a moment to settle after connect
       const id = setTimeout(poll, 1500);
       blePollers.push(id);
     }
@@ -502,17 +522,17 @@
             char.addEventListener('characteristicvaluechanged', handler);
             bleDiag(`${short}: subscribed to notifications`);
           } catch(e) {
-            bleDiag(`${short}: notify failed — ${e.message}`);
+            bleDiag(`${short}: notify failed â€” ${e.message}`);
           }
         }
 
         if (props.read) {
           try {
             const val = await char.readValue();
-            bleDiag(`${short}: read → [${Array.from(new Uint8Array(val.buffer))}]`);
+            bleDiag(`${short}: read â†’ [${Array.from(new Uint8Array(val.buffer))}]`);
             handler({ target: { value: val } });
           } catch(e) {
-            bleDiag(`${short}: read failed — ${e.message}`);
+            bleDiag(`${short}: read failed â€” ${e.message}`);
           }
 
           if (!props.notify && !props.indicate) {
@@ -531,7 +551,7 @@
           }
         }
       } catch(e) {
-        bleDiag(`${short}: NOT FOUND — ${e.message}`);
+        bleDiag(`${short}: NOT FOUND â€” ${e.message}`);
       }
     }
 
@@ -548,7 +568,7 @@
     function onBattData(e) {
       const raw = e.target.value;
       boardBattery = raw.byteLength > 1 ? raw.getUint8(1) : raw.getUint8(0);
-      bleDiag(`batt bytes=[${Array.from(new Uint8Array(raw.buffer))}] → ${boardBattery}%`);
+      bleDiag(`batt bytes=[${Array.from(new Uint8Array(raw.buffer))}] â†’ ${boardBattery}%`);
       document.getElementById('live-battery').textContent = boardBattery + '%';
     }
 
@@ -556,7 +576,7 @@
       const raw = e.target.value;
       const val = raw.getInt16(0, false);
       boardDutyCycle = Math.abs(val / 327.67);
-      bleDiag(`duty bytes=[${Array.from(new Uint8Array(raw.buffer))}] → ${boardDutyCycle.toFixed(1)}%`);
+      bleDiag(`duty bytes=[${Array.from(new Uint8Array(raw.buffer))}] â†’ ${boardDutyCycle.toFixed(1)}%`);
       document.getElementById('live-duty').textContent = boardDutyCycle.toFixed(0) + '%';
     }
 
@@ -564,8 +584,8 @@
       const raw = e.target.value;
       const tempC = raw.getInt16(0, false) / 10;
       boardTempF = tempC * 9 / 5 + 32;
-      bleDiag(`temp bytes=[${Array.from(new Uint8Array(raw.buffer))}] → ${boardTempF.toFixed(1)}°F`);
-      document.getElementById('live-temp').textContent = boardTempF.toFixed(0) + '°';
+      bleDiag(`temp bytes=[${Array.from(new Uint8Array(raw.buffer))}] â†’ ${boardTempF.toFixed(1)}Â°F`);
+      document.getElementById('live-temp').textContent = boardTempF.toFixed(0) + 'Â°';
     }
 
     function clearBlePollers() {
@@ -607,7 +627,7 @@
         if (dot) dot.className = 'ble-dot';
         if (liveLabel) liveLabel.textContent = 'no board';
       } else if (state === 'connecting') {
-        if (btn) { btn.textContent = 'Connecting…'; btn.classList.remove('ble-connected'); }
+        if (btn) { btn.textContent = 'Connectingâ€¦'; btn.classList.remove('ble-connected'); }
         if (dot) dot.className = 'ble-dot ble-dot-connecting';
         if (liveLabel) liveLabel.textContent = 'connecting';
       } else if (state === 'connected') {
@@ -623,7 +643,7 @@
       document.querySelectorAll('.board-card').forEach(c => c.classList.remove('selected'));
       document.querySelector(`[data-board="${type}-${model}"]`).classList.add('selected');
       document.getElementById('start-btn').disabled = false;
-      document.getElementById('gps-status').textContent = 'GPS ready — tap Start Ride';
+      document.getElementById('gps-status').textContent = 'GPS ready â€” tap Start Ride';
       const bleRow = document.getElementById('ble-row');
       if (bleRow) bleRow.style.display = type === 'onewheel' ? 'block' : 'none';
     }
@@ -668,7 +688,7 @@
       const { latitude: lat, longitude: lng, speed, altitude, altitudeAccuracy } = pos.coords;
       routePoints.push({ lat, lng, ts: Date.now() });
 
-      // Elevation tracking — ignore if alt unavailable or poor accuracy
+      // Elevation tracking â€” ignore if alt unavailable or poor accuracy
       if (altitude != null && (altitudeAccuracy == null || altitudeAccuracy < 30)) {
         if (lastAltM != null) {
           const delta = altitude - lastAltM;
@@ -1350,32 +1370,32 @@ textarea { resize: vertical; }
           <circle cx="20" cy="20" r="8" fill="var(--accent)"/>
         </svg>
         <span class="app-title">RideLogger</span>
-        <span style="font-size:0.65rem;color:var(--text3);font-family:var(--font-mono);">v19</span>
+        <span style="font-size:0.65rem;color:var(--text3);font-family:var(--font-mono);">v20</span>
       </div>
       <div class="topbar-right">
         <button class="icon-btn" onclick="toggleTheme()" title="Toggle theme">
-          <span id="theme-icon">☀️</span>
+          <span id="theme-icon">â˜€ï¸</span>
         </button>
-        <button class="icon-btn" onclick="signOut()" title="Sign out">⏻</button>
+        <button class="icon-btn" onclick="signOut()" title="Sign out">â»</button>
       </div>
     </header>
 
     <!-- Mobile Bottom Nav -->
     <nav class="bottom-nav" id="bottom-nav">
       <button class="nav-btn active" onclick="showPage('rides')" data-page="rides">
-        <span class="nav-icon">⚡</span>
+        <span class="nav-icon">âš¡</span>
         <span>Rides</span>
       </button>
       <button class="nav-btn" onclick="showPage('record')" data-page="record">
-        <span class="nav-icon rec-dot">●</span>
+        <span class="nav-icon rec-dot">â—</span>
         <span>Record</span>
       </button>
       <button class="nav-btn" onclick="showPage('log')" data-page="log">
-        <span class="nav-icon">✏️</span>
+        <span class="nav-icon">âœï¸</span>
         <span>Log Ride</span>
       </button>
       <button class="nav-btn" onclick="showPage('profile')" data-page="profile">
-        <span class="nav-icon">◎</span>
+        <span class="nav-icon">â—Ž</span>
         <span>Me</span>
       </button>
     </nav>
@@ -1386,20 +1406,20 @@ textarea { resize: vertical; }
     <nav class="sidebar" id="sidebar">
       <p class="sidebar-label">Navigation</p>
       <button class="nav-btn active" onclick="showPage('rides')" data-page="rides">
-        <span class="nav-icon">⚡</span>
+        <span class="nav-icon">âš¡</span>
         <span>My Rides</span>
       </button>
       <button class="nav-btn" onclick="showPage('record')" data-page="record">
-        <span class="nav-icon rec-dot">●</span>
+        <span class="nav-icon rec-dot">â—</span>
         <span>Record Ride</span>
       </button>
       <button class="nav-btn" onclick="showPage('log')" data-page="log">
-        <span class="nav-icon">✏️</span>
+        <span class="nav-icon">âœï¸</span>
         <span>Log Past Ride</span>
       </button>
       <p class="sidebar-label">Account</p>
       <button class="nav-btn" onclick="showPage('profile')" data-page="profile">
-        <span class="nav-icon">◎</span>
+        <span class="nav-icon">â—Ž</span>
         <span>Profile</span>
       </button>
     </nav>
@@ -1441,45 +1461,45 @@ textarea { resize: vertical; }
             <p class="picker-label">Which board?</p>
             <div class="board-grid">
               <button class="board-card" onclick="selectBoard('onewheel','GTS-XL')" data-board="onewheel-GTS-XL">
-                <div class="board-icon">🟠</div>
+                <div class="board-icon">ðŸŸ </div>
                 <div>GTS XL</div>
               </button>
               <button class="board-card" onclick="selectBoard('onewheel','GTS')" data-board="onewheel-GTS">
-                <div class="board-icon">🟠</div>
+                <div class="board-icon">ðŸŸ </div>
                 <div>GTS</div>
               </button>
               <button class="board-card" onclick="selectBoard('onewheel','GT')" data-board="onewheel-GT">
-                <div class="board-icon">🟠</div>
+                <div class="board-icon">ðŸŸ </div>
                 <div>GT</div>
               </button>
               <button class="board-card" onclick="selectBoard('onewheel','XR-C')" data-board="onewheel-XR-C">
-                <div class="board-icon">🟠</div>
+                <div class="board-icon">ðŸŸ </div>
                 <div>XR-C</div>
               </button>
               <button class="board-card" onclick="selectBoard('onewheel','XR')" data-board="onewheel-XR">
-                <div class="board-icon">🟠</div>
+                <div class="board-icon">ðŸŸ </div>
                 <div>XR</div>
               </button>
               <button class="board-card" onclick="selectBoard('onewheel','Pint S')" data-board="onewheel-Pint S">
-                <div class="board-icon">🟠</div>
+                <div class="board-icon">ðŸŸ </div>
                 <div>Pint S</div>
               </button>
               <button class="board-card" onclick="selectBoard('onewheel','Pint X')" data-board="onewheel-Pint X">
-                <div class="board-icon">🟠</div>
+                <div class="board-icon">ðŸŸ </div>
                 <div>Pint X</div>
               </button>
               <button class="board-card" onclick="selectBoard('onewheel','Pint')" data-board="onewheel-Pint">
-                <div class="board-icon">🟠</div>
+                <div class="board-icon">ðŸŸ </div>
                 <div>Pint</div>
               </button>
               <button class="board-card" onclick="selectBoard('euc','')" data-board="euc-">
-                <div class="board-icon">🔘</div>
+                <div class="board-icon">ðŸ”˜</div>
                 <div>EUC</div>
               </button>
             </div>
           </div>
 
-          <!-- BLE connect — only shown for Onewheel boards -->
+          <!-- BLE connect â€” only shown for Onewheel boards -->
           <div id="ble-row">
             <button class="btn-ble" id="ble-btn" onclick="connectBLE()">
               <span class="ble-dot" id="ble-dot"></span>
@@ -1516,7 +1536,7 @@ textarea { resize: vertical; }
             </div>
           </div>
 
-          <!-- Elevation row — always shown -->
+          <!-- Elevation row â€” always shown -->
           <div class="live-stats-secondary">
             <div class="live-stat-sm">
               <span id="live-elev-gain">+0</span>
@@ -1528,14 +1548,14 @@ textarea { resize: vertical; }
             </div>
           </div>
 
-          <!-- BLE telemetry row — only shown for Onewheel -->
+          <!-- BLE telemetry row â€” only shown for Onewheel -->
           <div class="live-stats-secondary" id="ble-stats-row" style="display:none;margin-top:0;">
             <div class="live-stat-sm">
               <span id="live-battery">--%</span>
               <label>battery</label>
             </div>
             <div class="live-stat-sm">
-              <span id="live-temp">--°</span>
+              <span id="live-temp">--Â°</span>
               <label>temp</label>
             </div>
             <div class="live-stat-sm">
@@ -1543,13 +1563,13 @@ textarea { resize: vertical; }
               <label>duty cycle</label>
             </div>
             <div class="live-stat-sm" style="background:transparent;border-color:transparent;">
-              <span style="font-size:0.9rem;">📡</span>
+              <span style="font-size:0.9rem;">ðŸ“¡</span>
               <label id="ble-live-label">no board</label>
             </div>
           </div>
 
           <div id="record-map" class="map-container" style="margin-bottom:1rem;"></div>
-          <button class="btn-stop" onclick="stopRecording()">⬛ Stop &amp; Save</button>
+          <button class="btn-stop" onclick="stopRecording()">â¬› Stop &amp; Save</button>
         </div>
 
       </div>
@@ -1637,7 +1657,7 @@ textarea { resize: vertical; }
     <!-- Ride Detail Modal -->
     <div id="ride-modal" class="modal" onclick="closeModal(event)">
       <div class="modal-inner">
-        <button class="modal-close" onclick="closeRideModal()">✕</button>
+        <button class="modal-close" onclick="closeRideModal()">âœ•</button>
         <div id="modal-map" class="map-container modal-map"></div>
         <div id="modal-content"></div>
         <div class="modal-actions">
@@ -1684,12 +1704,13 @@ textarea { resize: vertical; }
       navigator.serviceWorker.register("/sw.js").catch(e => console.log("SW error:", e));
       navigator.serviceWorker.addEventListener('message', e => {
         if (e.data?.type === 'SW_UPDATED') {
-          // Reload to pick up new HTML — skip if a ride is in progress
+          // Reload to pick up new HTML â€” skip if a ride is in progress
           if (!watchId) window.location.reload();
-          else toast('App update ready — will apply after ride ends');
+          else toast('App update ready â€” will apply after ride ends');
         }
       });
     }
   </script>
 </body>
 </html>
+
