@@ -385,6 +385,9 @@
         bleServer = await bleDevice.gatt.connect();
         bleService = await bleServer.getPrimaryService(OW_SERVICE);
 
+        // Discover all characteristics first so we can see what the board exposes
+        await discoverAllChars(bleService);
+
         // GT/GTS/GTS-XL require a BLE auth handshake; Pint/XR/XRC do not
         if (OW_GT_MODELS.has(selectedBoard.model)) {
           await tryGTUnlock(bleService);
@@ -406,6 +409,28 @@
         bleConnected = false;
         setBleStatus('idle');
         if (e.name !== 'NotFoundError') toast('BLE error: ' + e.message);
+      }
+    }
+
+    async function discoverAllChars(service) {
+      try {
+        const chars = await service.getCharacteristics();
+        bleDiag(`=== ${chars.length} characteristics found ===`);
+        for (const char of chars) {
+          const short = char.uuid.slice(4, 8);
+          const p = char.properties;
+          let val = '';
+          if (p.read) {
+            try {
+              const data = await char.readValue();
+              val = '[' + Array.from(new Uint8Array(data.buffer)) + ']';
+            } catch(e) { val = 'ERR:' + e.message; }
+          }
+          bleDiag(`${short} n=${p.notify?1:0} r=${p.read?1:0} w=${p.write?1:0} ${val}`);
+        }
+        bleDiag('=== end ===');
+      } catch(e) {
+        bleDiag('discover failed: ' + e.message);
       }
     }
 
@@ -1325,7 +1350,7 @@ textarea { resize: vertical; }
           <circle cx="20" cy="20" r="8" fill="var(--accent)"/>
         </svg>
         <span class="app-title">RideLogger</span>
-        <span style="font-size:0.65rem;color:var(--text3);font-family:var(--font-mono);">v18</span>
+        <span style="font-size:0.65rem;color:var(--text3);font-family:var(--font-mono);">v19</span>
       </div>
       <div class="topbar-right">
         <button class="icon-btn" onclick="toggleTheme()" title="Toggle theme">
