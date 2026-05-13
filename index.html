@@ -12,6 +12,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/spark-md5@3.0.2/spark-md5.min.js"></script>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
     import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js";
@@ -60,6 +61,7 @@
     let boardTempF = null;
     let boardDutyCycle = null;
     let blePollers = [];
+    let bleKeepAlive = null;
 
     // Elevation state
     let elevGainM = 0;
@@ -72,10 +74,12 @@
     const OW_CHAR_BATT      = 'e659f303-ea98-11e3-ac10-0800200c9a66';
     const OW_CHAR_DUTY      = 'e659f30d-ea98-11e3-ac10-0800200c9a66';
     const OW_CHAR_TEMP      = 'e659f310-ea98-11e3-ac10-0800200c9a66';
-    // Auth characteristics (all Onewheel models)
-    const OW_CHAR_AUTH_IN   = 'e659f3fe-ea98-11e3-ac10-0800200c9a66'; // notify-only: board sends challenge
-    const OW_CHAR_AUTH_OUT  = 'e659f3ff-ea98-11e3-ac10-0800200c9a66'; // write-only: we send response
-    const OW_CHAR_SERIAL    = 'e659f318-ea98-11e3-ac10-0800200c9a66'; // board identifier used in response
+    // Auth characteristics (GT/GTS/GTS-XL only -- Pint/XR skip auth entirely)
+    const OW_CHAR_FW        = 'e659f311-ea98-11e3-ac10-0800200c9a66'; // firmware revision -- writing it triggers challenge
+    const OW_CHAR_AUTH_IN   = 'e659f3fe-ea98-11e3-ac10-0800200c9a66'; // notify: board sends 20-byte CRX challenge
+    const OW_CHAR_AUTH_OUT  = 'e659f3ff-ea98-11e3-ac10-0800200c9a66'; // write: we send 20-byte MD5 response
+    // Static key hardcoded in FM firmware -- same across all GT/GTS generations
+    const OW_GT_AUTH_KEY    = new Uint8Array([0xd9,0x25,0x5f,0x0f,0x23,0x35,0x4e,0x19,0xba,0x73,0x9c,0xcd,0xc4,0xa9,0x17,0x65]);
     const OW_GT_MODELS      = new Set(['GT', 'GTS', 'GTS-XL']);
 
     // Tire circumference in inches per model for RPM -> speed
@@ -390,7 +394,13 @@
         await discoverAllChars(bleService);
 
         // Only GT/GTS/GTS-XL use the f3fe/f3ff auth handshake; Pint/XR skip it
-        if (OW_GT_MODELS.has(selectedBoard.model)) await tryGTUnlock(bleService);
+        if (OW_GT_MODELS.has(selectedBoard.model)) {
+          await tryGTUnlock(bleService);
+          // Keep-alive: board re-locks if no auth for >24s; re-run every 20s
+          bleKeepAlive = setInterval(async () => {
+            if (bleService && bleConnected) await tryGTUnlock(bleService);
+          }, 20000);
+        }
 
         await subscribeChar(bleService, OW_CHAR_RPM, onRpmData);
         await subscribeChar(bleService, OW_CHAR_BATT, onBattData);
@@ -433,56 +443,71 @@
       }
     }
 
+    // GT/GTS BLE authentication handshake (community-reverse-engineered protocol).
+    // Stock GT requires Future Motion server to complete -- works on Rewheel-patched boards.
+    // Protocol: write f311 to trigger 20-byte CRX challenge on f3fe, respond with
+    // MD5(challenge[3:19] + STATIC_KEY) wrapped in CRX packet on f3ff.
     async function tryGTUnlock(service) {
       try {
-        // Subscribe to f3fe -- board sends challenge as a notification
+        // Step 1: Read firmware revision -- we write it back to trigger the challenge
+        const fwChar = await service.getCharacteristic(OW_CHAR_FW);
+        const fwValue = await fwChar.readValue();
+        bleDiag('f311 fw: [' + Array.from(new Uint8Array(fwValue.buffer)) + ']');
+
+        // Step 2: Subscribe to challenge characteristic before writing trigger
         const authIn = await service.getCharacteristic(OW_CHAR_AUTH_IN);
         await authIn.startNotifications();
-        authIn.addEventListener('characteristicvaluechanged', async (e) => {
-          const challenge = Array.from(new Uint8Array(e.target.value.buffer));
-          bleDiag('f3fe challenge notify: ' + JSON.stringify(challenge));
-          await sendAuthResponse(service, challenge);
+
+        // Step 3: Collect 20-byte challenge; write trigger; wait up to 3s
+        const challenge = await new Promise((resolve, reject) => {
+          const buf = [];
+          const handler = (e) => {
+            buf.push(...Array.from(new Uint8Array(e.target.value.buffer)));
+            if (buf.length >= 20) {
+              authIn.removeEventListener('characteristicvaluechanged', handler);
+              resolve(buf.slice(0, 20));
+            }
+          };
+          authIn.addEventListener('characteristicvaluechanged', handler);
+          const tid = setTimeout(() => {
+            authIn.removeEventListener('characteristicvaluechanged', handler);
+            reject(new Error('challenge timeout'));
+          }, 3000);
+          // Writing f311 tells the board to issue the challenge on f3fe
+          fwChar.writeValue(fwValue)
+            .then(() => bleDiag('f311 write: challenge triggered'))
+            .catch(e => { clearTimeout(tid); authIn.removeEventListener('characteristicvaluechanged', handler); reject(e); });
         });
-        bleDiag('f3fe: subscribed, waiting for challenge...');
 
-        // Also read f318 (board serial/identifier) -- used in some response computations
-        try {
-          const serialChar = await service.getCharacteristic(OW_CHAR_SERIAL);
-          const serialVal = await serialChar.readValue();
-          const serial = Array.from(new Uint8Array(serialVal.buffer));
-          bleDiag('f318 serial: ' + JSON.stringify(serial));
-        } catch(e) {}
+        bleDiag('f3fe challenge: [' + challenge + ']');
 
-        // Give the board 800ms to send the f3fe challenge notification
-        await new Promise(r => setTimeout(r, 800));
-      } catch(e) {
-        bleDiag('Auth setup error: ' + e.message);
-      }
-    }
-
-    async function sendAuthResponse(service, challenge) {
-      try {
-        const authOut = await service.getCharacteristic(OW_CHAR_AUTH_OUT);
-        // Try response candidates in order -- first accepted write wins
-        const candidates = [
-          { label: '2b XOR D8', bytes: new Uint8Array([challenge[0]^0xD8, challenge[1]^0xD8]) },
-          { label: '2b XOR FF', bytes: new Uint8Array([challenge[0]^0xFF, challenge[1]^0xFF]) },
-          { label: '2b XOR 05', bytes: new Uint8Array([challenge[0]^0x05, challenge[1]^0x05]) },
-          { label: '2b echo',   bytes: new Uint8Array(challenge.slice(0,2)) },
-          { label: '3b CRX',   bytes: new Uint8Array([0x43, 0x52, 0x58]) },
-        ];
-        for (const { label, bytes } of candidates) {
-          try {
-            await authOut.writeValue(bytes);
-            bleDiag('Auth OK f3ff: ' + label + ' -> [' + Array.from(bytes) + ']');
-            await new Promise(r => setTimeout(r, 400));
-            return;
-          } catch(e) {
-            bleDiag('f3ff ' + label + ' failed: ' + e.message);
-          }
+        // Step 4: Validate CRX signature (bytes 0-2 must be 0x43 0x52 0x58 = "CRX")
+        if (challenge[0] !== 0x43 || challenge[1] !== 0x52 || challenge[2] !== 0x58) {
+          throw new Error('bad CRX signature: [' + challenge.slice(0, 3) + ']');
         }
+
+        // Step 5: MD5(challenge[3:19] ++ STATIC_KEY) -- 32 bytes -> 16-byte digest
+        const hashInput = new Uint8Array(32);
+        hashInput.set(challenge.slice(3, 19), 0);
+        hashInput.set(OW_GT_AUTH_KEY, 16);
+        const hexDigest = SparkMD5.ArrayBuffer.hash(hashInput.buffer);
+        const digest = [];
+        for (let i = 0; i < hexDigest.length; i += 2)
+          digest.push(parseInt(hexDigest.slice(i, i + 2), 16));
+
+        // Step 6: Build 20-byte response: [CRX prefix] + MD5 digest + XOR checksum
+        const response = [0x43, 0x52, 0x58, ...digest];
+        let xor = 0;
+        for (const b of response) xor ^= b;
+        response.push(xor);
+
+        // Step 7: Send response to f3ff
+        const authOut = await service.getCharacteristic(OW_CHAR_AUTH_OUT);
+        await authOut.writeValue(new Uint8Array(response));
+        bleDiag('f3ff: sent ' + response.length + '-byte MD5 response');
       } catch(e) {
-        bleDiag('sendAuthResponse error: ' + e.message);
+        bleDiag('GT auth: ' + e.message);
+        // Non-fatal -- board may still stream telemetry on Rewheel-patched firmware
       }
     }
 
@@ -591,6 +616,7 @@
     function clearBlePollers() {
       blePollers.forEach(clearTimeout);
       blePollers = [];
+      if (bleKeepAlive) { clearInterval(bleKeepAlive); bleKeepAlive = null; }
     }
 
     function clearBleDiag() {
