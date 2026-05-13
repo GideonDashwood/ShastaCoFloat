@@ -1,51 +1,53 @@
 # Project State
 
 ## Current Status
-- Phase: 2
-- Phase name: Encoding Fix & Deploy
-- Status: Complete
-- Plans: 1 (02-01-encoding-sweep)
+- Milestone: v1.1
+- Milestone name: VESC Support + UI Refresh
+- Phase: Not started (defining requirements)
+- Status: Planning
+- Plans: 0
 
 ## Project Reference
-See: .planning/PROJECT.md (updated 2026-05-12)
+See: .planning/PROJECT.md (updated 2026-05-13)
 
 **Core value**: A connected ride with accurate, readable telemetry
-**Current focus**: Phase 2 — Complete (Bug Fix milestone done)
+**Current focus**: Milestone v1.1 — VESC Support + UI Refresh
 
 ## Current Position
 
 | Field | Value |
 |-------|-------|
-| Milestone | Bug Fix |
-| Phase | 2 of 2 |
-| Plan | 02-01 (1 of 1) |
-| Status | Complete |
-| Progress | [##########] 100% |
+| Milestone | v1.1 VESC Support + UI Refresh |
+| Phase | Not started (defining requirements) |
+| Plan | — |
+| Status | Planning |
+| Progress | [----------] 0% |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Requirements total | 9 |
-| Requirements complete | 9 |
-| Phases complete | 2/2 |
+| Requirements total | 7 |
+| Requirements complete | 0 |
+| Phases complete | 0/? |
 
 ## Accumulated Context
 
 ### Key Decisions
-- Auth guard uses `OW_GT_MODELS` set (GT/GTS/GTS-XL only) — Pint/XR/XR-C skip auth
-- Encoding fix targets all non-ASCII bytes: HTML entities in markup, Unicode escapes in script blocks
-- SW cache version must be bumped on every deploy (Phase 1 used ridelogger-v21 → Phase 2 targets ridelogger-v22)
+- VESC added as new board type alongside existing GT/Pint/XR — same board selector, same Firebase rides collection
+- boardType: 'VESC' field tags VESC rides in Firestore
+- Mock BLE used during development; real VESC protocol wired when board is available
+- Dark, sporty, minimal UI redesign — applies to entire app
+- Previous milestone (Bug Fix): Phase 1 fixed Pint BLE auth regression; Phase 2 fixed encoding characters
 
 ### Known Risks
-- Physical Pint board required for end-to-end BLE validation; no emulator
-- Encoding fix must be exhaustive — partial sweep leaves residual garbled characters
-- XR/XR-C auth behavior assumed same as Pint (no auth) but not independently verified (v2 item)
+- Real VESC BLE protocol not yet implemented — depends on user wiring it up with physical board
+- UI redesign is broad scope — touches entire app in single-file index.html
 
 ### Blockers
 None
 
 ## Session Continuity
 
-Last updated: 2026-05-12
-Next action: Bug Fix milestone complete — both phases done and pushed to origin/main
+Last updated: 2026-05-13
+Next action: Plan Phase 3 (VESC board type + mock BLE) then Phase 4 (UI redesign)
