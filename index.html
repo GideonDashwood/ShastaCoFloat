@@ -450,9 +450,10 @@
       }
     }
 
-    // Pint/XR authentication -- same static key and CRX structure as GT but
-    // the 36-byte response echoes the challenge data back before the digest:
-    // [CRX(3)] + [challenge[3:19](16)] + [MD5(challenge[3:19]+key)(16)] + [XOR(1)]
+    // Pint/XR authentication -- same 20-byte structure as GT but the first 3
+    // bytes of the response echo whatever header the board sent (GT always sends
+    // CRX; Pint X sends a different 3-byte header). No header validation.
+    // Response: [challenge[0:3](3)] + [MD5(challenge[3:19]+key)(16)] + [XOR(1)]
     async function tryPintUnlock(service) {
       try {
         const fwChar = await service.getCharacteristic(OW_CHAR_FW);
@@ -483,10 +484,6 @@
 
         bleDiag('f3fe challenge: [' + challenge + ']');
 
-        if (challenge[0] !== 0x43 || challenge[1] !== 0x52 || challenge[2] !== 0x58) {
-          throw new Error('bad CRX: [' + challenge.slice(0, 3) + ']');
-        }
-
         const hashInput = new Uint8Array(32);
         hashInput.set(challenge.slice(3, 19), 0);
         hashInput.set(OW_GT_AUTH_KEY, 16);
@@ -495,7 +492,8 @@
         for (let i = 0; i < hexDigest.length; i += 2)
           digest.push(parseInt(hexDigest.slice(i, i + 2), 16));
 
-        const response = [0x43, 0x52, 0x58, ...challenge.slice(3, 19), ...digest];
+        // Echo the board's own 3-byte header back -- Pint X sends [9,142,86], GT sends CRX
+        const response = [...challenge.slice(0, 3), ...digest];
         let xor = 0;
         for (const b of response) xor ^= b;
         response.push(xor);
