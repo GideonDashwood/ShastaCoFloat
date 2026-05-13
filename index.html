@@ -356,6 +356,15 @@
     }
 
     // ============ BLE ============
+    function bleDiag(msg) {
+      console.log('[BLE]', msg);
+      const el = document.getElementById('ble-diag');
+      if (!el) return;
+      el.style.display = 'block';
+      el.textContent += msg + '\n';
+      el.scrollTop = el.scrollHeight;
+    }
+
     window.connectBLE = async function() {
       if (!navigator.bluetooth) {
         toast('Bluetooth not supported on this browser/device');
@@ -400,53 +409,47 @@
         const challengeChar = await service.getCharacteristic(OW_CHAR_CHALLENGE);
         const challenge = await challengeChar.readValue();
         const challengeBytes = Array.from(new Uint8Array(challenge.buffer));
-        console.log('[BLE] GT challenge:', challengeBytes);
+        bleDiag('GT challenge: ' + JSON.stringify(challengeBytes));
 
         const unlockChar = await service.getCharacteristic(OW_CHAR_UNLOCK);
-        // CRX unlock token — community-documented approach for GT firmware
         const token = new Uint8Array(20);
         token[0] = 0x43; token[1] = 0x52; token[2] = 0x58; // "CRX"
         await unlockChar.writeValue(token);
-        console.log('[BLE] GT unlock sent');
-        // Give the board a moment to process before reading telemetry
+        bleDiag('GT unlock sent');
         await new Promise(r => setTimeout(r, 400));
       } catch(e) {
-        console.log('[BLE] GT unlock error:', e.message);
+        bleDiag('GT unlock error: ' + e.message);
       }
     }
 
     async function subscribeChar(service, uuid, handler) {
+      const short = uuid.slice(4, 8);
       try {
         const char = await service.getCharacteristic(uuid);
         const props = char.properties;
-        console.log(`[BLE] ${uuid} props:`, { notify: props.notify, read: props.read });
+        bleDiag(`${short}: notify=${props.notify} read=${props.read}`);
 
-        // Subscribe to notifications for live updates
         if (props.notify || props.indicate) {
           try {
             await char.startNotifications();
             char.addEventListener('characteristicvaluechanged', handler);
-            console.log(`[BLE] ${uuid} notifications on`);
+            bleDiag(`${short}: subscribed to notifications`);
           } catch(e) {
-            console.log(`[BLE] ${uuid} notify failed:`, e.message);
+            bleDiag(`${short}: notify failed — ${e.message}`);
           }
         }
 
-        // Always do an immediate read to show current value — notify-only
-        // characteristics only fire when the value changes, so battery at a
-        // steady 75% would never arrive otherwise.
         if (props.read) {
           try {
             const val = await char.readValue();
-            console.log(`[BLE] ${uuid} initial read:`, Array.from(new Uint8Array(val.buffer)));
+            bleDiag(`${short}: read → [${Array.from(new Uint8Array(val.buffer))}]`);
             handler({ target: { value: val } });
           } catch(e) {
-            console.log(`[BLE] ${uuid} initial read failed:`, e.message);
+            bleDiag(`${short}: read failed — ${e.message}`);
           }
 
-          // Poll every 3s only if no notify support
           if (!props.notify && !props.indicate) {
-            console.log(`[BLE] ${uuid} starting 3s poll`);
+            bleDiag(`${short}: starting 3s poll`);
             const poll = async () => {
               if (!bleConnected) return;
               try {
@@ -461,7 +464,7 @@
           }
         }
       } catch(e) {
-        console.log(`[BLE] ${uuid} not found:`, e.message);
+        bleDiag(`${short}: NOT FOUND — ${e.message}`);
       }
     }
 
@@ -477,27 +480,24 @@
 
     function onBattData(e) {
       const raw = e.target.value;
-      console.log('[BLE] battery raw bytes:', Array.from(new Uint8Array(raw.buffer)));
       boardBattery = raw.byteLength > 1 ? raw.getUint8(1) : raw.getUint8(0);
-      console.log('[BLE] battery parsed:', boardBattery);
+      bleDiag(`batt bytes=[${Array.from(new Uint8Array(raw.buffer))}] → ${boardBattery}%`);
       document.getElementById('live-battery').textContent = boardBattery + '%';
     }
 
     function onDutyData(e) {
       const raw = e.target.value;
-      console.log('[BLE] duty raw bytes:', Array.from(new Uint8Array(raw.buffer)));
       const val = raw.getInt16(0, false);
       boardDutyCycle = Math.abs(val / 327.67);
-      console.log('[BLE] duty parsed:', boardDutyCycle);
+      bleDiag(`duty bytes=[${Array.from(new Uint8Array(raw.buffer))}] → ${boardDutyCycle.toFixed(1)}%`);
       document.getElementById('live-duty').textContent = boardDutyCycle.toFixed(0) + '%';
     }
 
     function onTempData(e) {
       const raw = e.target.value;
-      console.log('[BLE] temp raw bytes:', Array.from(new Uint8Array(raw.buffer)));
       const tempC = raw.getInt16(0, false) / 10;
       boardTempF = tempC * 9 / 5 + 32;
-      console.log('[BLE] temp parsed:', boardTempF, '°F');
+      bleDiag(`temp bytes=[${Array.from(new Uint8Array(raw.buffer))}] → ${boardTempF.toFixed(1)}°F`);
       document.getElementById('live-temp').textContent = boardTempF.toFixed(0) + '°';
     }
 
@@ -506,10 +506,16 @@
       blePollers = [];
     }
 
+    function clearBleDiag() {
+      const el = document.getElementById('ble-diag');
+      if (el) { el.textContent = ''; el.style.display = 'none'; }
+    }
+
     function onBleDisconnected() {
       bleConnected = false;
       boardSpeedMph = null;
       clearBlePollers();
+      clearBleDiag();
       setBleStatus('idle');
       toast('Board disconnected');
     }
@@ -519,6 +525,7 @@
       bleConnected = false;
       boardSpeedMph = null;
       clearBlePollers();
+      clearBleDiag();
       setBleStatus('idle');
     }
 
@@ -1408,6 +1415,7 @@ textarea { resize: vertical; }
               <span class="ble-dot" id="ble-dot"></span>
               Connect Onewheel
             </button>
+            <div id="ble-diag" style="display:none;margin-top:8px;background:#0a0500;border:1px solid rgba(249,115,22,0.2);border-radius:8px;padding:8px 10px;font-family:monospace;font-size:0.72rem;color:#fb923c;max-height:140px;overflow-y:auto;white-space:pre-wrap;line-height:1.5;"></div>
           </div>
 
           <button class="btn-primary btn-start" onclick="startRecording()" id="start-btn" disabled style="margin-top:0.75rem">
