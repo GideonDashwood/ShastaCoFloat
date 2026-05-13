@@ -14,7 +14,10 @@
 **Mode**: mvp
 **Depends on**: Nothing (continues from Bug Fix milestone)
 **Requirements**: VESC-01, VESC-02, VESC-03, VESC-04, VESC-05
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 03-01-PLAN.md — Add VESC board button, vesc-connect-row HTML, vesc-stats-row HTML, state variables, connectVESCMock() with stub, selectBoard/startRecording/clearBlePollers updates
+- [ ] 03-02-PLAN.md — Voltage accumulation, stopRecording title, confirmSave vescVoltage, board labels in rides list and detail modal, resetRecordPage cleanup, SW v29 bump, commit + push
 **Success Criteria** (what must be TRUE):
   1. "VESC" appears in the board selector dropdown and can be selected.
   2. Clicking "Connect" with VESC selected triggers the mock connection (no real BLE scan needed) and the app transitions to the live ride screen.
@@ -43,5 +46,5 @@
 |-------|----------------|--------|-----------|
 | 1. Pint BLE Telemetry Fix | 1/1 | Complete | 2026-05-12 |
 | 2. Encoding Fix & Deploy | 1/1 | Complete | 2026-05-12 |
-| 3. VESC Board Type + Mock BLE | 0/? | Not started | — |
+| 3. VESC Board Type + Mock BLE | 0/2 | Not started | — |
 | 4. UI Redesign | 0/? | Not started | — |
