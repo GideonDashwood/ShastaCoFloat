@@ -828,7 +828,7 @@
         if (boardBattery != null) window._battSamples.push(boardBattery);
         if (boardDutyCycle != null && boardDutyCycle > window._dutyMax) window._dutyMax = boardDutyCycle;
         if (vescVoltage != null) window._vescVoltageSamples.push(vescVoltage);
-        if (boardTempF != null) window._tempSamples.push(boardTempF);
+        if (boardTempF != null && selectedBoard.type === 'vesc') window._tempSamples.push(boardTempF);
       }, 1000);
       watchId = navigator.geolocation.watchPosition(onGpsUpdate,
         err => { document.getElementById('gps-status').textContent = 'GPS error: ' + err.message; },
