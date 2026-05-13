@@ -741,6 +741,7 @@
 
     // ============ RECORD ============
     window.connectVESCMock = function() {
+      if (vescMockInterval) return; // already running -- ignore re-tap
       // TODO: VESC BLE -- replace this mock with real VESC protocol
       // Real implementation: connect to Nordic UART Service (NUS)
       //   Service UUID : 6e400001-b5a3-f393-e0a9-e50e24dcca9e
