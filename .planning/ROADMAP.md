@@ -14,24 +14,27 @@
 **Mode**: mvp
 **Depends on**: Nothing (first phase)
 **Requirements**: BLE-01, BLE-02, BLE-03, BLE-04, BLE-05
+**Plans**: 1 plan
 **Success Criteria** (what must be TRUE):
   1. Connecting a Pint board does not trigger the f3fe/f3ff auth handshake — the BLE diagnostic panel shows no "challenge" log line.
   2. Battery percentage shows a realistic non-zero value on the live ride screen within 5 seconds of connecting the Pint.
   3. Duty cycle and temperature both display realistic values on the live ride screen (duty cycle non-zero while riding; temperature in a plausible range).
   4. When a poller read fails, the error message appears in the BLE diagnostic panel instead of disappearing silently.
-**Plans**: TBD
+
+Plans:
+- [ ] 01-ble-auth-guard-PLAN.md — Guard tryGTUnlock to GT/GTS/GTS-XL models, surface poller errors, bump SW version, commit + push
 
 ### Phase 2: Encoding Fix & Deploy
 **Goal**: All garbled characters are replaced with correct glyphs throughout the app and the fix is delivered to users via a bumped service worker cache.
 **Mode**: mvp
 **Depends on**: Phase 1
 **Requirements**: ENC-01, ENC-02, ENC-03, DEPLOY-01
+**Plans**: TBD
 **Success Criteria** (what must be TRUE):
   1. The live ride screen shows correct special characters (→, °, —) with no garbled sequences like `â†'` or `Â°`.
   2. The ride detail view shows correct special characters with no garbled sequences.
   3. A PowerShell scan (`Select-String -Path index.html -Pattern '[^\x00-\x7F]'`) returns zero matches, confirming no non-ASCII bytes remain in the source.
   4. A returning user on Chrome receives the fixed build automatically on their next visit (service worker cache version is bumped).
-**Plans**: TBD
 
 ---
 
