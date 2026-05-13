@@ -22,7 +22,7 @@
   4. When a poller read fails, the error message appears in the BLE diagnostic panel instead of disappearing silently.
 
 Plans:
-- [ ] 01-ble-auth-guard-PLAN.md — Guard tryGTUnlock to GT/GTS/GTS-XL models, surface poller errors, bump SW version, commit + push
+- [x] 01-ble-auth-guard-PLAN.md — Guard tryGTUnlock to GT/GTS/GTS-XL models, surface poller errors, bump SW version, commit + push
 
 ### Phase 2: Encoding Fix & Deploy
 **Goal**: All garbled characters are replaced with correct glyphs throughout the app and the fix is delivered to users via a bumped service worker cache.
@@ -42,5 +42,5 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Pint BLE Telemetry Fix | 0/1 | Not started | - |
+| 1. Pint BLE Telemetry Fix | 1/1 | Complete | 2026-05-12 |
 | 2. Encoding Fix & Deploy | 0/1 | Not started | - |
