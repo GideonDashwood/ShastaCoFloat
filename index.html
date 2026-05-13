@@ -260,7 +260,7 @@
         const dist = (r.distanceKm || 0).toFixed(2);
         const dur = formatDuration(r.durationSeconds || 0);
         const top = (r.topSpeedKmh || 0).toFixed(1);
-        const boardLabel = r.boardType === 'onewheel' ? `OW ${r.boardModel || ''}`.trim() : 'EUC';
+        const boardLabel = r.boardType === 'onewheel' ? escHtml(`OW ${r.boardModel || ''}`.trim()) : 'EUC';
         return `<div class="ride-card" onclick="openRide('${r.id}')">
           <div class="ride-card-left">
             <div class="ride-title">${escHtml(r.title || 'Untitled Ride')}</div>
@@ -305,7 +305,7 @@
         }
       }, 100);
       const date = new Date(ride.startedAt).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-      const boardLabel = ride.boardType === 'onewheel' ? `Onewheel ${ride.boardModel || ''}`.trim() : 'EUC';
+      const boardLabel = ride.boardType === 'onewheel' ? escHtml(`Onewheel ${ride.boardModel || ''}`.trim()) : 'EUC';
       const elevUp = ride.elevGainFt != null ? `+${ride.elevGainFt.toFixed(0)}ft` : '--';
       const elevDown = ride.elevLossFt != null ? `-${ride.elevLossFt.toFixed(0)}ft` : '--';
       document.getElementById('modal-content').innerHTML = `
@@ -871,7 +871,7 @@
         });
         const el = document.getElementById('board-breakdown');
         el.innerHTML = Object.entries(breakdown).sort((a,b)=>b[1]-a[1]).map(([k,v]) =>
-          `<div class="board-row"><span class="board-row-name">${k}</span><span class="board-row-count">${v} ride${v!==1?'s':''}</span></div>`
+          `<div class="board-row"><span class="board-row-name">${escHtml(k)}</span><span class="board-row-count">${v} ride${v!==1?'s':''}</span></div>`
         ).join('') || '<p style="color:var(--text3);font-size:0.88rem;text-align:center;padding:0.5rem">No rides yet</p>';
       } catch(e) { console.error(e); }
     }
