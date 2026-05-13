@@ -749,6 +749,8 @@
         setBleStatus('idle');
         const vd = document.getElementById('vesc-dot');
         if (vd) vd.className = 'ble-dot';
+        const vb = document.getElementById('vesc-btn');
+        if (vb) vb.innerHTML = '<span class="ble-dot" id="vesc-dot"></span> Connect VESC (Mock)';
         toast('VESC mock disconnected');
         return;
       }
@@ -770,6 +772,8 @@
       setBleStatus('connected', 'VESC Mock');
       const vd = document.getElementById('vesc-dot');
       if (vd) vd.className = 'ble-dot ble-dot-on';
+      const vb = document.getElementById('vesc-btn');
+      if (vb) vb.innerHTML = '<span class="ble-dot ble-dot-on" id="vesc-dot"></span> Disconnect VESC (Mock)';
       toast('VESC mock connected');
       let t = 0;
       vescMockInterval = setInterval(() => {

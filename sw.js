@@ -1,4 +1,4 @@
-const CACHE = 'ridelogger-v39';
+const CACHE = 'ridelogger-v40';
 const ASSETS = ['/', '/index.html', '/manifest.json'];
 
 self.addEventListener('install', e => {
