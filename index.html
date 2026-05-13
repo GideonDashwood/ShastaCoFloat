@@ -406,17 +406,30 @@
       try {
         const challengeChar = await service.getCharacteristic(OW_CHAR_CHALLENGE);
         const challenge = await challengeChar.readValue();
-        const challengeBytes = Array.from(new Uint8Array(challenge.buffer));
-        bleDiag('GT f311 challenge: ' + JSON.stringify(challengeBytes));
+        const cb = Array.from(new Uint8Array(challenge.buffer));
+        bleDiag('GT f311 challenge: ' + JSON.stringify(cb));
 
         const unlockChar = await service.getCharacteristic(OW_CHAR_UNLOCK);
-        const token = new Uint8Array(20);
-        token[0] = 0x43; token[1] = 0x52; token[2] = 0x58; // "CRX"
-        await unlockChar.writeValue(token);
-        bleDiag('GT CRX token written to f312');
-        await new Promise(r => setTimeout(r, 400));
+
+        // Try response lengths in order — board will reject wrong sizes
+        const candidates = [
+          { label: '3b CRX',    bytes: new Uint8Array([0x43, 0x52, 0x58]) },
+          { label: '2b XOR D8', bytes: new Uint8Array([cb[0] ^ 0xD8, cb[1] ^ 0xD8]) },
+          { label: '2b XOR 3C', bytes: new Uint8Array([cb[0] ^ 0x3C, cb[1] ^ 0x3C]) },
+          { label: '2b echo',   bytes: new Uint8Array(cb) },
+        ];
+
+        for (const { label, bytes } of candidates) {
+          try {
+            await unlockChar.writeValue(bytes);
+            bleDiag(`GT unlock OK: ${label} [${Array.from(bytes)}]`);
+            await new Promise(r => setTimeout(r, 400));
+            return;
+          } catch(e) {
+            bleDiag(`GT ${label} failed: ${e.message}`);
+          }
+        }
       } catch(e) {
-        // f311/f312 don't exist on non-GT boards — expected
         bleDiag('GT unlock skipped: ' + e.message);
       }
     }
