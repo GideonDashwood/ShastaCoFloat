@@ -393,17 +393,20 @@
         // Discover all characteristics first so we can see what the board exposes
         await discoverAllChars(bleService);
 
-        // GT/GTS/GTS-XL need full MD5 auth; Pint/XR need only an f311 write-back to
-        // start streaming telemetry (battery, duty, temp) -- without it the board
-        // returns all-zero bytes and never sends change notifications.
+        // All Onewheel boards use the same MD5 challenge-response handshake but
+        // with different response sizes: GT=20 bytes, Pint/XR=36 bytes (echoes
+        // the challenge data back before the digest).
         if (OW_GT_MODELS.has(selectedBoard.model)) {
           await tryGTUnlock(bleService);
-          // Keep-alive: board re-locks if no auth for >24s; re-run every 20s
           bleKeepAlive = setInterval(async () => {
             if (bleService && bleConnected) await tryGTUnlock(bleService);
           }, 20000);
         } else {
-          await triggerPintTelemetry(bleService);
+          await tryPintUnlock(bleService);
+          // Board re-locks after 24s without auth; re-run every 20s
+          bleKeepAlive = setInterval(async () => {
+            if (bleService && bleConnected) await tryPintUnlock(bleService);
+          }, 20000);
         }
 
         await subscribeChar(bleService, OW_CHAR_RPM, onRpmData);
@@ -447,16 +450,61 @@
       }
     }
 
-    // Pint/XR telemetry trigger: reading f311 and writing it back tells the board to
-    // begin streaming notifications on battery, duty, and temp characteristics.
-    async function triggerPintTelemetry(service) {
+    // Pint/XR authentication -- same static key and CRX structure as GT but
+    // the 36-byte response echoes the challenge data back before the digest:
+    // [CRX(3)] + [challenge[3:19](16)] + [MD5(challenge[3:19]+key)(16)] + [XOR(1)]
+    async function tryPintUnlock(service) {
       try {
         const fwChar = await service.getCharacteristic(OW_CHAR_FW);
         const fwValue = await fwChar.readValue();
-        await fwChar.writeValue(fwValue);
-        bleDiag('f311 write-back: Pint telemetry streaming started');
+        bleDiag('f311 fw: [' + Array.from(new Uint8Array(fwValue.buffer)) + ']');
+
+        const authIn = await service.getCharacteristic(OW_CHAR_AUTH_IN);
+        await authIn.startNotifications();
+
+        const challenge = await new Promise((resolve, reject) => {
+          const buf = [];
+          const handler = (e) => {
+            buf.push(...Array.from(new Uint8Array(e.target.value.buffer)));
+            if (buf.length >= 20) {
+              authIn.removeEventListener('characteristicvaluechanged', handler);
+              resolve(buf.slice(0, 20));
+            }
+          };
+          authIn.addEventListener('characteristicvaluechanged', handler);
+          const tid = setTimeout(() => {
+            authIn.removeEventListener('characteristicvaluechanged', handler);
+            reject(new Error('challenge timeout'));
+          }, 3000);
+          fwChar.writeValue(fwValue)
+            .then(() => bleDiag('f311 write: Pint challenge triggered'))
+            .catch(e => { clearTimeout(tid); authIn.removeEventListener('characteristicvaluechanged', handler); reject(e); });
+        });
+
+        bleDiag('f3fe challenge: [' + challenge + ']');
+
+        if (challenge[0] !== 0x43 || challenge[1] !== 0x52 || challenge[2] !== 0x58) {
+          throw new Error('bad CRX: [' + challenge.slice(0, 3) + ']');
+        }
+
+        const hashInput = new Uint8Array(32);
+        hashInput.set(challenge.slice(3, 19), 0);
+        hashInput.set(OW_GT_AUTH_KEY, 16);
+        const hexDigest = SparkMD5.ArrayBuffer.hash(hashInput.buffer);
+        const digest = [];
+        for (let i = 0; i < hexDigest.length; i += 2)
+          digest.push(parseInt(hexDigest.slice(i, i + 2), 16));
+
+        const response = [0x43, 0x52, 0x58, ...challenge.slice(3, 19), ...digest];
+        let xor = 0;
+        for (const b of response) xor ^= b;
+        response.push(xor);
+
+        const authOut = await service.getCharacteristic(OW_CHAR_AUTH_OUT);
+        await authOut.writeValue(new Uint8Array(response));
+        bleDiag('f3ff: sent ' + response.length + '-byte Pint response');
       } catch(e) {
-        bleDiag('f311 ping: ' + e.message);
+        bleDiag('Pint auth: ' + e.message);
       }
     }
 
