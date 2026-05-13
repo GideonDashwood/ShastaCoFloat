@@ -3,7 +3,8 @@
 ## Current Status
 - Phase: 1
 - Phase name: Pint BLE Telemetry Fix
-- Status: not started
+- Status: Ready to execute
+- Plans: 1 (01-ble-auth-guard)
 
 ## Project Reference
 See: .planning/PROJECT.md (updated 2026-05-12)
@@ -17,9 +18,9 @@ See: .planning/PROJECT.md (updated 2026-05-12)
 |-------|-------|
 | Milestone | Bug Fix |
 | Phase | 1 of 2 |
-| Plan | None yet |
-| Status | Not started |
-| Progress | [----------] 0% |
+| Plan | 01-ble-auth-guard (1 of 1) |
+| Status | Ready to execute |
+| Progress | [-----     ] 0% |
 
 ## Performance Metrics
 
@@ -47,4 +48,4 @@ None
 ## Session Continuity
 
 Last updated: 2026-05-12
-Next action: Plan Phase 1 via `/gsd-plan-phase 1`
+Next action: Execute Phase 1 via `/gsd-execute-phase 1`
