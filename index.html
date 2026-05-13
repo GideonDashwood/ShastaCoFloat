@@ -682,6 +682,7 @@
         err => { document.getElementById('gps-status').textContent = 'GPS error: ' + err.message; },
         { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
       );
+      window._watchId = watchId;
     }
 
     function onGpsUpdate(pos) {
@@ -733,7 +734,7 @@
     }
 
     window.stopRecording = function() {
-      if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+      if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; window._watchId = null; }
       clearInterval(timerInterval);
       if (recordMap) { recordMap.remove(); mapInstances = mapInstances.filter(m => m !== recordMap); recordMap = null; }
       const recMapEl = document.getElementById('record-map');
@@ -1705,7 +1706,7 @@ textarea { resize: vertical; }
       navigator.serviceWorker.addEventListener('message', e => {
         if (e.data?.type === 'SW_UPDATED') {
           // Reload to pick up new HTML -- skip if a ride is in progress
-          if (!watchId) window.location.reload();
+          if (!window._watchId) window.location.reload();
           else toast('App update ready -- will apply after ride ends');
         }
       });
