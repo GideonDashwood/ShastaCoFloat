@@ -799,7 +799,7 @@
       if (!navigator.geolocation) { document.getElementById('gps-status').textContent = 'GPS not supported'; return; }
       routePoints = []; topSpeedMph = 0; startTime = Date.now();
       elevGainM = 0; elevLossM = 0; lastAltM = null;
-      boardBattery = null; boardTempF = null; boardDutyCycle = null;
+      boardBattery = null; boardTempF = null; boardDutyCycle = null; vescVoltage = null;
       let battSamples = [], dutyMax = 0;
       window._battSamples = battSamples;
       window._dutyMax = dutyMax;
