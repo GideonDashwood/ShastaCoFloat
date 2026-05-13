@@ -29,7 +29,10 @@ Plans:
 **Mode**: mvp
 **Depends on**: Phase 1
 **Requirements**: ENC-01, ENC-02, ENC-03, DEPLOY-01
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 02-01-PLAN.md � Replace all non-ASCII bytes in index.html, bump SW to ridelogger-v22, commit and push
 **Success Criteria** (what must be TRUE):
   1. The live ride screen shows correct special characters (→, °, —) with no garbled sequences like `â†'` or `Â°`.
   2. The ride detail view shows correct special characters with no garbled sequences.
